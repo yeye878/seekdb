@@ -51,6 +51,17 @@ ready_label_is_readable
 1
 select * from ai_column_retry_strict.docs;
 ERROR HY000: AI column has unfinished tasks for table_id=<table_id>, column_id=<column_id>
+select distinctrow * from ai_column_retry_strict.docs;
+ERROR HY000: AI column has unfinished tasks for table_id=<table_id>, column_id=<column_id>
+prepare strict_calc from 'select sql_calc_found_rows * from ai_column_retry_strict.docs';
+execute strict_calc;
+ERROR HY000: AI column has unfinished tasks for table_id=<table_id>, column_id=<column_id>
+deallocate prepare strict_calc;
+create database ai_column_strict_other;
+create table ai_column_strict_other.docs(id bigint primary key);
+select * from ai_column_strict_other.docs;
+id
+drop database ai_column_strict_other;
 prepare strict_select from 'select result from ai_column_retry_strict.docs where id = 2';
 execute strict_select;
 ERROR HY000: AI column has unfinished tasks for table_id=<table_id>, column_id=<column_id>

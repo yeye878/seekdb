@@ -2444,8 +2444,8 @@ int ObCreateTableResolver::resolve_ai_column_definitions(const ParseNode *node,
               LOG_WARN("failed to set the default value of the ai column state column", K(ret));
             }
           } else if (OB_SUCC(ret) && 1 == k) {
-            // All request columns inserted by one statement receive the same
-            // statement-stable version, preserving one group per row and change.
+            // Each result cell gets a unique incarnation ID. The worker groups
+            // cells by row key and checks these IDs independently on writeback.
             ObObj default_request;
             default_request.set_varchar(ObString::make_string(ai_column_request_version_expr()));
             default_request.set_collation_type(ObCharset::get_system_collation());

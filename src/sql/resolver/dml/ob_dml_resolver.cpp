@@ -11497,10 +11497,17 @@ int ObDMLResolver::gen_values_table_column_items(const int64_t column_cnt,
         column_expr->set_result_type(res_types.at(i));
         column_expr->set_result_flag(table_def->access_exprs_.at(i)->get_result_flag());
         column_expr->set_ref_id(table_item.table_id_, i + OB_APP_MIN_COLUMN_ID);
-        // compatible Mysql8.0, column name is column_0, column_1, ...
+        // Optional values-backed virtual-table names; otherwise use the
+        // MySQL-compatible column_0, column_1, ... naming.
         ObSqlString tmp_col_name;
         char *buf = NULL;
-        if (OB_FAIL(tmp_col_name.append_fmt("column_%ld", i))) {
+        if (table_def->column_names_.count() == column_cnt) {
+          ret = tmp_col_name.assign(table_def->column_names_.at(i).ptr(),
+                                    table_def->column_names_.at(i).length());
+        } else {
+          ret = tmp_col_name.append_fmt("column_%ld", i);
+        }
+        if (OB_FAIL(ret)) {
         } else if (OB_ISNULL(buf = static_cast<char*>(allocator_->alloc(tmp_col_name.length())))) {
           ret = common::OB_ALLOCATE_MEMORY_FAILED;
         } else {
@@ -13032,7 +13039,6 @@ int ObDMLResolver::resolve_ai_column_meta_table_item(const ParseNode &table_node
       } else if (OB_FAIL(table_def->column_types_.push_back(res_type))) {
       } else if (OB_FAIL(table_def->column_names_.push_back(
                    ObString::make_string(COLUMN_NAMES[j])))) {
-      } else if (OB_FAIL(table_def->column_nullables_.push_back(0))) {
       }
     }
     for (int64_t k = 0; OB_SUCC(ret) && k < cells.count(); ++k) {

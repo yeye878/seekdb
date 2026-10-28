@@ -65,6 +65,18 @@ from ai_column_retry_strict.docs where label is not null;
 --replace_regex /table_id=[0-9]+, column_id=[0-9]+/table_id=<table_id>, column_id=<column_id>/
 --error 11120
 select * from ai_column_retry_strict.docs;
+--replace_regex /table_id=[0-9]+, column_id=[0-9]+/table_id=<table_id>, column_id=<column_id>/
+--error 11120
+select distinctrow * from ai_column_retry_strict.docs;
+prepare strict_calc from 'select sql_calc_found_rows * from ai_column_retry_strict.docs';
+--replace_regex /table_id=[0-9]+, column_id=[0-9]+/table_id=<table_id>, column_id=<column_id>/
+--error 11120
+execute strict_calc;
+deallocate prepare strict_calc;
+create database ai_column_strict_other;
+create table ai_column_strict_other.docs(id bigint primary key);
+select * from ai_column_strict_other.docs;
+drop database ai_column_strict_other;
 prepare strict_select from 'select result from ai_column_retry_strict.docs where id = 2';
 --replace_regex /table_id=[0-9]+, column_id=[0-9]+/table_id=<table_id>, column_id=<column_id>/
 --error 11120

@@ -1840,7 +1840,7 @@ int ObSql::handle_ps_execute(const ObPsStmtId client_stmt_id,
       bool strict_read = false;
       if (OB_FAIL(session.get_sys_variable(share::SYS_VAR_AI_COLUMN_STRICT_READ, strict_read))) {
         LOG_WARN("failed to get the ai column strict read mode", K(ret));
-      } else if (OB_FAIL(ai_column_check_strict_read(sql, strict_read))) {
+      } else if (OB_FAIL(ai_column_check_strict_read(sql, session.get_database_name(), strict_read))) {
         LOG_WARN("the ai column is not ready", K(ret));
         ectx.set_need_disconnect(false);
       }
@@ -1994,7 +1994,7 @@ OB_INLINE int ObSql::handle_text_query(const ObString &stmt, ObSqlCtx &context, 
     bool strict_read = false;
     if (OB_FAIL(session.get_sys_variable(share::SYS_VAR_AI_COLUMN_STRICT_READ, strict_read))) {
       LOG_WARN("failed to get the ai column strict read mode", K(ret));
-    } else if (OB_FAIL(ai_column_check_strict_read(trimed_stmt, strict_read))) {
+    } else if (OB_FAIL(ai_column_check_strict_read(trimed_stmt, session.get_database_name(), strict_read))) {
       LOG_WARN("the ai column is not ready", K(ret));
       // the statement is rejected with a user error, the client must not lose
       // the connection

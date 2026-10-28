@@ -121,8 +121,8 @@ int ai_column_gen_hidden_name(common::ObIAllocator &allocator,
                               const char *prefix,
                               common::ObString &hidden_name);
 
-// Statement-stable request version shared by all AI columns changed by one row
-// statement. It also distinguishes a delete/reinsert from the old row lifetime.
+// A genuinely unique version for one invalidated AI result. Group identity is
+// derived from the row key; versions are compared per AI column on writeback.
 const char *ai_column_request_version_expr();
 
 // collect the primary key column names from the table element list
@@ -155,7 +155,9 @@ int ai_column_rewrite_update_stmt(const common::ObString &sql,
 
 // the strict read mode, returns OB_ERR_AI_COLUMN_UNFINISHED_TASK when the
 // statement reads an AI column that still has unfinished tasks
-int ai_column_check_strict_read(const common::ObString &sql, const bool strict_read);
+int ai_column_check_strict_read(const common::ObString &sql,
+                                const common::ObString &current_db,
+                                const bool strict_read);
 
 // whether the table factor refers to the system view __all_ai_column
 bool ai_column_is_meta_table(const ParseNode &table_node);

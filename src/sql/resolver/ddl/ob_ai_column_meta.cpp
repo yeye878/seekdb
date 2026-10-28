@@ -23,6 +23,8 @@
 #include "common/mysqlclient/ob_mysql_result.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <map>
+#include <string>
 #include <curl/curl.h>
 #include "lib/allocator/page_arena.h"
 #include "common/object/ob_obj_type.h"
@@ -515,7 +517,7 @@ int ai_column_gen_hidden_name(ObIAllocator &allocator,
 
 const char *ai_column_request_version_expr()
 {
-  return "cast(unix_timestamp(current_timestamp(6)) * 1000000 as signed)";
+  return "uuid_short()";
 }
 
 int ai_column_describe_expr(const ParseNode *expr,
@@ -643,6 +645,79 @@ struct AiRowTask
   ObSEArray<AiColumnTask, 4> columns_;
   AiRowTask() : pk_values_(), columns_() {}
 };
+
+// Terminal outcomes are reused only by the single background worker. Keeping
+// them outside the per-round arena avoids duplicate model calls while another
+// cell of the same request group is retrying.
+struct AiTerminalOutcome
+{
+  std::string value_literal_;
+  int64_t state_;
+  bool has_value_;
+  AiTerminalOutcome() : value_literal_(), state_(0), has_value_(false) {}
+};
+
+typedef std::map<std::string, AiTerminalOutcome> AiOutcomeCache;
+
+AiOutcomeCache &ai_outcome_cache()
+{
+  static AiOutcomeCache cache;
+  return cache;
+}
+
+void ai_cache_append_part(std::string &key, const ObString &part)
+{
+  const uint64_t len = static_cast<uint64_t>(part.length());
+  key.append(reinterpret_cast<const char *>(&len), sizeof(len));
+  if (len > 0) {
+    key.append(part.ptr(), part.length());
+  }
+}
+
+std::string ai_cache_key(const ObAiColumnMeta &meta,
+                         const AiRowTask &task,
+                         const AiColumnTask &cell)
+{
+  std::string key;
+  ai_cache_append_part(key, meta.db_name_);
+  ai_cache_append_part(key, meta.table_name_);
+  ai_cache_append_part(key, meta.column_name_);
+  for (int64_t i = 0; i < task.pk_values_.count(); ++i) {
+    ai_cache_append_part(key, task.pk_values_.at(i));
+  }
+  key.append(reinterpret_cast<const char *>(&cell.request_id_), sizeof(cell.request_id_));
+  return key;
+}
+
+void ai_cache_terminal(const ObAiColumnMeta &meta,
+                       const AiRowTask &task,
+                       const AiColumnTask &cell,
+                       const int64_t state,
+                       const ObString &value_literal,
+                       const bool has_value)
+{
+  AiOutcomeCache &cache = ai_outcome_cache();
+  AiTerminalOutcome outcome;
+  outcome.state_ = state;
+  outcome.has_value_ = has_value;
+  if (has_value && !value_literal.empty()) {
+    outcome.value_literal_.assign(value_literal.ptr(), value_literal.length());
+  }
+  cache[ai_cache_key(meta, task, cell)] = outcome;
+}
+
+void ai_forget_row_outcomes(const ObIArray<ObAiColumnMeta> &metas,
+                            const ObIArray<int64_t> &columns,
+                            const AiRowTask &task)
+{
+  AiOutcomeCache &cache = ai_outcome_cache();
+  for (int64_t c = 0; c < columns.count(); ++c) {
+    const AiColumnTask &cell = task.columns_.at(c);
+    if (cell.found_) {
+      cache.erase(ai_cache_key(metas.at(columns.at(c)), task, cell));
+    }
+  }
+}
 
 void ai_worker_sleep()
 {
@@ -1632,19 +1707,32 @@ int ai_publish_row(common::ObISQLClient *proxy,
       ObSqlString value_literal;
       bool publish_value = false;
       int64_t publish_state = AI_STATE_DONE;
-      const int compute_ret = ai_compute_value(allocator, meta, *endpoint,
-                                               cell, value_literal);
-      if (OB_SUCCESS == compute_ret) {
-        publish_value = true;
-      } else {
-        const int64_t retry_count = (cell.state_ < 100) ? 0 : (cell.state_ % 100);
-        if (retry_count + 1 > meta.max_retries_) {
-          publish_state = AI_STATE_GIVEUP_BASE + retry_count + 1;
-        } else {
-          publish_state = AI_STATE_RETRY_BASE + retry_count + 1;
+      AiOutcomeCache &outcome_cache = ai_outcome_cache();
+      AiOutcomeCache::iterator cached = outcome_cache.find(ai_cache_key(meta, task, cell));
+      int compute_ret = OB_SUCCESS;
+      if (outcome_cache.end() != cached) {
+        publish_state = cached->second.state_;
+        publish_value = cached->second.has_value_;
+        if (publish_value && OB_FAIL(value_literal.append(cached->second.value_literal_.data(),
+                                                          cached->second.value_literal_.size()))) {
+          LOG_WARN("failed to restore the cached ai column result", K(ret));
         }
-        LOG_WARN("failed to compute the value of the ai column", K(compute_ret),
-                 K(meta.column_name_), K(cell.state_));
+      } else {
+        compute_ret = ai_compute_value(allocator, meta, *endpoint, cell, value_literal);
+        if (OB_SUCCESS == compute_ret) {
+          publish_value = true;
+          ai_cache_terminal(meta, task, cell, publish_state, value_literal.string(), true);
+        } else {
+          const int64_t retry_count = (cell.state_ < 100) ? 0 : (cell.state_ % 100);
+          if (retry_count + 1 > meta.max_retries_) {
+            publish_state = AI_STATE_GIVEUP_BASE + retry_count + 1;
+            ai_cache_terminal(meta, task, cell, publish_state, ObString(), false);
+          } else {
+            publish_state = AI_STATE_RETRY_BASE + retry_count + 1;
+          }
+          LOG_WARN("failed to compute the value of the ai column", K(compute_ret),
+                   K(meta.column_name_), K(cell.state_));
+        }
       }
       const bool needs_retry = publish_state >= AI_STATE_RETRY_BASE &&
                                publish_state < AI_STATE_GIVEUP_BASE;
@@ -1731,9 +1819,14 @@ int ai_publish_row(common::ObISQLClient *proxy,
     } else if (0 == affected) {
       // the row was changed concurrently, the next round recomputes the values
       LOG_DEBUG("the result of the ai column is stale", K(affected));
+      if (group_terminal) {
+        ai_forget_row_outcomes(metas, columns, task);
+      }
       for (int64_t c = 0; c < cell_unfinished.count(); ++c) {
         cell_unfinished.at(c) = 1;
       }
+    } else if (group_terminal) {
+      ai_forget_row_outcomes(metas, columns, task);
     }
   }
   return ret;
@@ -2012,8 +2105,8 @@ int build_task_table_query(const ObIArray<ObAiColumnMeta> &metas,
                    column.table_name_.ptr()))) {
         LOG_WARN("failed to append the query", K(ret));
       } else {
-        // The primary key identifies the row and the request version identifies
-        // its change/incarnation. Columns changed by one statement share both.
+        // The active request group is identified by the row key. Each AI cell
+        // has its own UUID_SHORT version for stale-write protection.
         for (int64_t p = 0; OB_SUCC(ret) && p < column.pk_columns_.count(); ++p) {
           if (p > 0 && OB_FAIL(sql.append(", '|', "))) {
             LOG_WARN("failed to append the query", K(ret));
@@ -2027,11 +2120,9 @@ int build_task_table_query(const ObIArray<ObAiColumnMeta> &metas,
             && OB_FAIL(sql.append("''"))) {
           LOG_WARN("failed to append the query", K(ret));
         } else if (OB_FAIL(sql.append_fmt(
-                     ", ':', cast(`%.*s` as char)) as request_id, "
+                     ") as request_id, "
                      "cast(`%.*s` / 100 as signed) as state, "
                      "cast(`%.*s` %% 100 as signed) as retry_count, concat(",
-                     column.request_column_name_.length(),
-                     column.request_column_name_.ptr(),
                      column.state_column_name_.length(),
                      column.state_column_name_.ptr(),
                      column.state_column_name_.length(),
@@ -2484,8 +2575,18 @@ bool has_select_wildcard(const ObString &sql)
       if (0 == depth && 4 == len && 0 == strncasecmp(sql.ptr() + begin, "from", 4)) {
         break;
       }
-      const bool modifier = (3 == len && 0 == strncasecmp(sql.ptr() + begin, "all", 3)) ||
-                            (8 == len && 0 == strncasecmp(sql.ptr() + begin, "distinct", 8));
+      const bool modifier =
+          (3 == len && 0 == strncasecmp(sql.ptr() + begin, "all", 3)) ||
+          (8 == len && 0 == strncasecmp(sql.ptr() + begin, "distinct", 8)) ||
+          (11 == len && 0 == strncasecmp(sql.ptr() + begin, "distinctrow", 11)) ||
+          (19 == len && 0 == strncasecmp(sql.ptr() + begin, "sql_calc_found_rows", 19)) ||
+          (13 == len && 0 == strncasecmp(sql.ptr() + begin, "high_priority", 13)) ||
+          (13 == len && 0 == strncasecmp(sql.ptr() + begin, "straight_join", 13)) ||
+          (16 == len && 0 == strncasecmp(sql.ptr() + begin, "sql_small_result", 16)) ||
+          (14 == len && 0 == strncasecmp(sql.ptr() + begin, "sql_big_result", 14)) ||
+          (17 == len && 0 == strncasecmp(sql.ptr() + begin, "sql_buffer_result", 17)) ||
+          (9 == len && 0 == strncasecmp(sql.ptr() + begin, "sql_cache", 9)) ||
+          (12 == len && 0 == strncasecmp(sql.ptr() + begin, "sql_no_cache", 12));
       item_start = modifier;
     } else if ('(' == c) {
       ++depth;
@@ -2508,6 +2609,51 @@ bool has_select_wildcard(const ObString &sql)
     }
   }
   return found;
+}
+
+bool wildcard_table_matches(const ObString &sql,
+                            const ObString &current_db,
+                            const ObAiColumnMeta &meta)
+{
+  int64_t pos = 0;
+  int64_t depth = 0;
+  if (!read_word(sql, pos, "select")) {
+    return false;
+  }
+  while (pos < sql.length()) {
+    const char c = sql.ptr()[pos];
+    if ('`' == c || '\'' == c || '"' == c) {
+      ObSqlString ignored;
+      if (OB_SUCCESS != copy_quoted(sql, pos, ignored)) {
+        break;
+      }
+    } else if (is_ident_char(c)) {
+      const int64_t begin = pos++;
+      while (pos < sql.length() && is_ident_char(sql.ptr()[pos])) {
+        ++pos;
+      }
+      if (0 == depth && 4 == pos - begin &&
+          0 == strncasecmp(sql.ptr() + begin, "from", 4)) {
+        ObString db;
+        ObString table;
+        if (!read_table_ref(sql, pos, db, table)) {
+          return false;
+        }
+        const ObString &effective_db = db.empty() ? current_db : db;
+        return table.case_compare_equal(meta.table_name_) &&
+               effective_db.case_compare_equal(meta.db_name_);
+      }
+    } else if ('(' == c) {
+      ++depth;
+      ++pos;
+    } else if (')' == c) {
+      --depth;
+      ++pos;
+    } else {
+      ++pos;
+    }
+  }
+  return false;
 }
 
 int append_quoted_ident(ObSqlString &out, const ObString &name)
@@ -2900,7 +3046,9 @@ int ai_column_rewrite_update_stmt(const ObString &sql,
   return ret;
 }
 
-int ai_column_check_strict_read(const ObString &sql, const bool strict_read)
+int ai_column_check_strict_read(const ObString &sql,
+                                const ObString &current_db,
+                                const bool strict_read)
 {
   int ret = OB_SUCCESS;
   using namespace ai_column_rw;
@@ -2923,10 +3071,15 @@ int ai_column_check_strict_read(const ObString &sql, const bool strict_read)
       for (int64_t i = 0; OB_SUCC(ret) && i < metas.count(); ++i) {
         const ObAiColumnMeta &meta = metas.at(i);
         bool pending = false;
-        const bool reads_column = wildcard_read || mentions(sql, meta.column_name_);
-        if (!reads_column || !mentions(sql, meta.table_name_)) {
+        if (wildcard_read) {
+          if (!wildcard_table_matches(sql, current_db, meta)) {
+            continue;
+          }
+        } else if (!mentions(sql, meta.column_name_) || !mentions(sql, meta.table_name_)) {
           // the statement does not read this AI column
-        } else if (OB_FAIL(ObAiColumnRegistry::get_instance().get_pending(
+          continue;
+        }
+        if (OB_FAIL(ObAiColumnRegistry::get_instance().get_pending(
                      meta.db_name_, meta.table_name_, meta.column_name_, pending))) {
           LOG_WARN("failed to get the pending flag of the ai column", K(ret),
                    K(meta.column_name_));
