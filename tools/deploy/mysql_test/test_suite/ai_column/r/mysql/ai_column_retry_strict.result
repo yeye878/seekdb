@@ -49,6 +49,12 @@ select count(*) = 3 as ready_label_is_readable
 from ai_column_retry_strict.docs where label is not null;
 ready_label_is_readable
 1
+select * from ai_column_retry_strict.docs;
+ERROR HY000: AI column has unfinished tasks for table_id=<table_id>, column_id=<column_id>
+prepare strict_select from 'select result from ai_column_retry_strict.docs where id = 2';
+execute strict_select;
+ERROR HY000: AI column has unfinished tasks for table_id=<table_id>, column_id=<column_id>
+deallocate prepare strict_select;
 select result from ai_column_retry_strict.docs where id = 2;
 ERROR HY000: AI column has unfinished tasks for table_id=<table_id>, column_id=<column_id>
 select id, result from ai_column_retry_strict.docs order by id;

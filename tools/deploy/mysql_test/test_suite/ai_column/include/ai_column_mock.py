@@ -219,6 +219,11 @@ def assert_events(port, assertion):
             any("slow-old" in event["user"] for event in events)
             and any("fast-new" in event["user"] for event in events)
         )
+    elif assertion == "same-input-retry":
+        retry_events = [event for event in events if "slow-old" in event["user"]]
+        ok = len(retry_events) == 2 and all(
+            event["status"] == 200 for event in retry_events
+        )
     elif assertion == "embedding":
         ok = any(event["path"].endswith("/embeddings") for event in events)
     else:

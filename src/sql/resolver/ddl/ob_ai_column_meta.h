@@ -121,6 +121,10 @@ int ai_column_gen_hidden_name(common::ObIAllocator &allocator,
                               const char *prefix,
                               common::ObString &hidden_name);
 
+// Statement-stable request version shared by all AI columns changed by one row
+// statement. It also distinguishes a delete/reinsert from the old row lifetime.
+const char *ai_column_request_version_expr();
+
 // collect the primary key column names from the table element list
 void ai_column_collect_pk_columns(const ParseNode *elements,
                                   common::ObIArray<common::ObString> &names);
@@ -158,4 +162,3 @@ bool ai_column_is_meta_table(const ParseNode &table_node);
 
 }  // namespace sql
 }  // namespace oceanbase
-

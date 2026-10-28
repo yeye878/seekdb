@@ -513,6 +513,11 @@ int ai_column_gen_hidden_name(ObIAllocator &allocator,
   return ret;
 }
 
+const char *ai_column_request_version_expr()
+{
+  return "cast(unix_timestamp(current_timestamp(6)) * 1000000 as signed)";
+}
+
 int ai_column_describe_expr(const ParseNode *expr,
                             const int32_t result_type,
                             ObIAllocator &allocator,
@@ -624,9 +629,10 @@ struct AiColumnTask
 {
   bool found_;
   int64_t state_;
+  int64_t request_id_;
   ObSEArray<ObString, 8> dep_values_;
   ObSEArray<int8_t, 8> dep_is_null_;
-  AiColumnTask() : found_(false), state_(0), dep_values_(), dep_is_null_() {}
+  AiColumnTask() : found_(false), state_(0), request_id_(0), dep_values_(), dep_is_null_() {}
 };
 
 // one row of the user table together with the pending state of every AI column
@@ -1381,7 +1387,9 @@ int ai_collect_pending_rows(common::ObISQLClient *proxy,
             ObSEArray<ObString, 8> dep_values;
             ObSEArray<int8_t, 8> dep_is_null;
             ObString state_text;
+            ObString request_text;
             int64_t state = 0;
+            int64_t request_id = 0;
             bool is_null = false;
             for (int64_t i = 0; OB_SUCC(ret) && i < meta.pk_columns_.count(); ++i) {
               ObString value;
@@ -1401,6 +1409,11 @@ int ai_collect_pending_rows(common::ObISQLClient *proxy,
               LOG_WARN("the state of the ai column is null", K(ret));
             } else {
               state = ai_to_int64(state_text);
+            }
+            if (OB_FAIL(ret)) {
+            } else if (OB_FAIL(ai_read_text(allocator, result, "rq", request_text, is_null))) {
+            } else if (!is_null) {
+              request_id = ai_to_int64(request_text);
             }
             for (int64_t i = 0; OB_SUCC(ret) && i < meta.dep_columns_.count(); ++i) {
               ObString value;
@@ -1445,6 +1458,7 @@ int ai_collect_pending_rows(common::ObISQLClient *proxy,
                 AiColumnTask &cell = tasks.at(task_idx).columns_.at(column_idx);
                 cell.found_ = true;
                 cell.state_ = state;
+                cell.request_id_ = request_id;
                 if (OB_FAIL(cell.dep_values_.assign(dep_values))) {
                   LOG_WARN("failed to copy the dependency values", K(ret));
                 } else if (OB_FAIL(cell.dep_is_null_.assign(dep_is_null))) {
@@ -1496,6 +1510,19 @@ int ai_append_number_condition(ObSqlString &cond, int64_t &cond_cnt,
   } else if (OB_FAIL(ai_append_ident(cond, column))) {
   } else {
     ret = cond.append_fmt(" = %ld", static_cast<long>(value));
+  }
+  return ret;
+}
+
+int ai_append_request_condition(ObSqlString &cond, int64_t &cond_cnt,
+                                const ObString &column, const int64_t value)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(ai_append_condition(cond, cond_cnt))) {
+  } else if (OB_FAIL(cond.append("coalesce("))) {
+  } else if (OB_FAIL(ai_append_ident(cond, column))) {
+  } else {
+    ret = cond.append_fmt(", 0) = %ld", static_cast<long>(value));
   }
   return ret;
 }
@@ -1554,10 +1581,13 @@ int ai_publish_row(common::ObISQLClient *proxy,
 {
   int ret = OB_SUCCESS;
   const ObAiColumnMeta *first_meta = NULL;
-  ObSqlString set_clause;
+  ObSqlString terminal_set_clause;
+  ObSqlString retry_set_clause;
   ObSqlString cond_clause;
-  int64_t set_cnt = 0;
+  int64_t terminal_set_cnt = 0;
+  int64_t retry_set_cnt = 0;
   int64_t cond_cnt = 0;
+  bool group_terminal = true;
   // the state that the publish statement writes to each cell, -1 means the cell
   // is not touched by the statement
   ObSEArray<int64_t, 8> next_state;
@@ -1597,6 +1627,7 @@ int ai_publish_row(common::ObISQLClient *proxy,
       // that the result is computed once the endpoint becomes available
       LOG_DEBUG("the endpoint of the ai model is not ready", K(endpoint_ret),
                 K(meta.model_name_));
+      group_terminal = false;
     } else {
       ObSqlString value_literal;
       bool publish_value = false;
@@ -1615,6 +1646,13 @@ int ai_publish_row(common::ObISQLClient *proxy,
         LOG_WARN("failed to compute the value of the ai column", K(compute_ret),
                  K(meta.column_name_), K(cell.state_));
       }
+      const bool needs_retry = publish_state >= AI_STATE_RETRY_BASE &&
+                               publish_state < AI_STATE_GIVEUP_BASE;
+      if (needs_retry) {
+        group_terminal = false;
+      }
+      ObSqlString &set_clause = needs_retry ? retry_set_clause : terminal_set_clause;
+      int64_t &set_cnt = needs_retry ? retry_set_cnt : terminal_set_cnt;
       if (OB_SUCC(ret) && publish_value &&
           OB_FAIL(ai_append_assignment(set_clause, set_cnt,
                                        meta.column_name_, value_literal.string()))) {
@@ -1629,6 +1667,11 @@ int ai_publish_row(common::ObISQLClient *proxy,
                                                     meta.state_column_name_,
                                                     cell.state_))) {
         LOG_WARN("failed to append the state condition of the ai column", K(ret));
+      } else if (OB_SUCC(ret) &&
+                 OB_FAIL(ai_append_request_condition(cond_clause, cond_cnt,
+                                                     meta.request_column_name_,
+                                                     cell.request_id_))) {
+        LOG_WARN("failed to append the request condition of the ai column", K(ret));
       } else if (OB_SUCC(ret) && c < next_state.count()) {
         next_state.at(c) = publish_state;
       }
@@ -1644,6 +1687,21 @@ int ai_publish_row(common::ObISQLClient *proxy,
         }
       }
     }
+  }
+  if (OB_SUCC(ret) && !group_terminal) {
+    // Publish only retry progress. Successful results stay hidden until every
+    // member of this row change group is READY or finally FAILED.
+    for (int64_t c = 0; c < next_state.count(); ++c) {
+      if (AI_STATE_DONE == next_state.at(c)) {
+        next_state.at(c) = -1;
+      }
+    }
+  }
+  ObSqlString set_clause;
+  const ObSqlString &selected_set = group_terminal ? terminal_set_clause : retry_set_clause;
+  const int64_t set_cnt = group_terminal ? terminal_set_cnt : retry_set_cnt;
+  if (OB_SUCC(ret) && set_cnt > 0 && OB_FAIL(set_clause.append(selected_set.string()))) {
+    LOG_WARN("failed to select the ai column publication assignments", K(ret));
   }
   if (OB_SUCC(ret) && set_cnt > 0) {
     ObSqlString sql;
@@ -1954,8 +2012,8 @@ int build_task_table_query(const ObIArray<ObAiColumnMeta> &metas,
                    column.table_name_.ptr()))) {
         LOG_WARN("failed to append the query", K(ret));
       } else {
-        // the request id of a row is derived from its primary key, so that all
-        // the AI columns of one row share the same request id
+        // The primary key identifies the row and the request version identifies
+        // its change/incarnation. Columns changed by one statement share both.
         for (int64_t p = 0; OB_SUCC(ret) && p < column.pk_columns_.count(); ++p) {
           if (p > 0 && OB_FAIL(sql.append(", '|', "))) {
             LOG_WARN("failed to append the query", K(ret));
@@ -1969,9 +2027,11 @@ int build_task_table_query(const ObIArray<ObAiColumnMeta> &metas,
             && OB_FAIL(sql.append("''"))) {
           LOG_WARN("failed to append the query", K(ret));
         } else if (OB_FAIL(sql.append_fmt(
-                     ") as request_id, "
+                     ", ':', cast(`%.*s` as char)) as request_id, "
                      "cast(`%.*s` / 100 as signed) as state, "
                      "cast(`%.*s` %% 100 as signed) as retry_count, concat(",
+                     column.request_column_name_.length(),
+                     column.request_column_name_.ptr(),
                      column.state_column_name_.length(),
                      column.state_column_name_.ptr(),
                      column.state_column_name_.length(),
@@ -2398,6 +2458,58 @@ int copy_quoted(const ObString &text, int64_t &pos, ObSqlString &out)
   return ret;
 }
 
+bool has_select_wildcard(const ObString &sql)
+{
+  bool found = false;
+  int64_t pos = 0;
+  int64_t depth = 0;
+  bool item_start = true;
+  if (!read_word(sql, pos, "select")) {
+    return false;
+  }
+  while (!found && pos < sql.length()) {
+    const char c = sql.ptr()[pos];
+    if ('`' == c || '\'' == c || '"' == c) {
+      ObSqlString ignored;
+      if (OB_SUCCESS != copy_quoted(sql, pos, ignored)) {
+        break;
+      }
+      item_start = false;
+    } else if (is_ident_char(c)) {
+      const int64_t begin = pos++;
+      while (pos < sql.length() && is_ident_char(sql.ptr()[pos])) {
+        ++pos;
+      }
+      const int64_t len = pos - begin;
+      if (0 == depth && 4 == len && 0 == strncasecmp(sql.ptr() + begin, "from", 4)) {
+        break;
+      }
+      const bool modifier = (3 == len && 0 == strncasecmp(sql.ptr() + begin, "all", 3)) ||
+                            (8 == len && 0 == strncasecmp(sql.ptr() + begin, "distinct", 8));
+      item_start = modifier;
+    } else if ('(' == c) {
+      ++depth;
+      ++pos;
+      item_start = false;
+    } else if (')' == c) {
+      --depth;
+      ++pos;
+      item_start = false;
+    } else if ('*' == c) {
+      found = item_start || (pos > 0 && '.' == sql.ptr()[pos - 1]);
+      ++pos;
+    } else {
+      if (',' == c && 0 == depth) {
+        item_start = true;
+      } else if ('.' != c && !isspace(static_cast<unsigned char>(c))) {
+        item_start = false;
+      }
+      ++pos;
+    }
+  }
+  return found;
+}
+
 int append_quoted_ident(ObSqlString &out, const ObString &name)
 {
   int ret = OB_SUCCESS;
@@ -2594,7 +2706,7 @@ int ai_column_rewrite_retry_stmt(const ObString &sql,
       } else if (OB_FAIL(out.append_fmt(" = %ld, ",
                                         static_cast<long>(AI_STATE_PENDING)))) {
       } else if (OB_FAIL(append_quoted_ident(out, meta->request_column_name_))) {
-      } else if (OB_FAIL(out.append(" = 0"))) {
+      } else if (OB_FAIL(out.append_fmt(" = %s", ai_column_request_version_expr()))) {
         LOG_WARN("failed to build the retry statement", K(ret));
       }
       if (OB_SUCC(ret) && !pred.empty()) {
@@ -2757,7 +2869,7 @@ int ai_column_rewrite_update_stmt(const ObString &sql,
           } else if (OB_FAIL(reset.append_fmt(" = %ld, ",
                                               static_cast<long>(AI_STATE_PENDING)))) {
           } else if (OB_FAIL(append_quoted_ident(reset, meta.request_column_name_))) {
-          } else if (OB_FAIL(reset.append(" = 0"))) {
+          } else if (OB_FAIL(reset.append_fmt(" = %s", ai_column_request_version_expr()))) {
             LOG_WARN("failed to build the reset clause", K(ret));
           }
         }
@@ -2807,18 +2919,18 @@ int ai_column_check_strict_read(const ObString &sql, const bool strict_read)
     } else if (OB_FAIL(ObAiColumnRegistry::get_instance().get_metas(metas))) {
       LOG_WARN("failed to get the ai column metas", K(ret));
     } else {
+      const bool wildcard_read = has_select_wildcard(sql);
       for (int64_t i = 0; OB_SUCC(ret) && i < metas.count(); ++i) {
         const ObAiColumnMeta &meta = metas.at(i);
         bool pending = false;
-        if (!mentions(sql, meta.column_name_) || !mentions(sql, meta.table_name_)) {
+        const bool reads_column = wildcard_read || mentions(sql, meta.column_name_);
+        if (!reads_column || !mentions(sql, meta.table_name_)) {
           // the statement does not read this AI column
         } else if (OB_FAIL(ObAiColumnRegistry::get_instance().get_pending(
                      meta.db_name_, meta.table_name_, meta.column_name_, pending))) {
           LOG_WARN("failed to get the pending flag of the ai column", K(ret),
                    K(meta.column_name_));
         } else if (pending) {
-          for (int64_t k = 0; k < metas.count(); ++k) {
-          }
           ret = OB_ERR_AI_COLUMN_UNFINISHED_TASK;
           LOG_USER_ERROR(OB_ERR_AI_COLUMN_UNFINISHED_TASK, 0L, 0L);
         }

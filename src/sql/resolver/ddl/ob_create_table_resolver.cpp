@@ -17,7 +17,6 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/ddl/ob_create_table_resolver.h"
 #include "sql/resolver/ddl/ob_ai_column_meta.h"
-#include "sql/resolver/ddl/ob_ai_column_meta.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/resolver/ddl/ob_fts_index_builder_util.h"
 #include "sql/rewrite/ob_transform_utils.h"
@@ -2443,6 +2442,16 @@ int ObCreateTableResolver::resolve_ai_column_definitions(const ParseNode *node,
             default_state.set_int(100);
             if (OB_FAIL(hidden_column.set_cur_default_value(default_state, false))) {
               LOG_WARN("failed to set the default value of the ai column state column", K(ret));
+            }
+          } else if (OB_SUCC(ret) && 1 == k) {
+            // All request columns inserted by one statement receive the same
+            // statement-stable version, preserving one group per row and change.
+            ObObj default_request;
+            default_request.set_varchar(ObString::make_string(ai_column_request_version_expr()));
+            default_request.set_collation_type(ObCharset::get_system_collation());
+            default_request.set_collation_level(CS_LEVEL_COERCIBLE);
+            if (OB_FAIL(hidden_column.set_cur_default_value(default_request, true))) {
+              LOG_WARN("failed to set the default value of the ai column request column", K(ret));
             }
           }
           if (OB_FAIL(hidden_column.set_column_name(hidden_names[k]))) {
