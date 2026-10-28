@@ -1,0 +1,21 @@
+paired_runs: 1
+build:
+  build_ik_all_sec: baseline=6.812000 candidate=6.837000 improvement=-0.37%
+  build_ik_content_sec: baseline=5.331000 candidate=5.385000 improvement=-1.01%
+  build_beng_en_sec: baseline=2.869000 candidate=2.902000 improvement=-1.15%
+  category_improvement: -0.84%
+tokenize:
+  tokenize_ik_avg_ms: baseline=0.333400 candidate=0.220900 improvement=33.74%
+  tokenize_beng_avg_ms: baseline=0.137500 candidate=0.172200 improvement=-25.24%
+  category_improvement: 4.25%
+query:
+  query_cn_avg_ms: baseline=2.661600 candidate=2.257500 improvement=15.18%
+  query_beng_avg_ms: baseline=3.734500 candidate=3.614200 improvement=3.22%
+  query_mixed_avg_ms: baseline=2.134700 candidate=2.354300 improvement=-10.29%
+  query_limit_avg_ms: baseline=3.370400 candidate=3.040700 improvement=9.78%
+  category_improvement: 4.47%
+mean_category_improvement: 2.63%
+query_cn_hits: baseline=[8001.0] candidate=[8001.0] match=True
+query_beng_hits: baseline=[11000.0] candidate=[11000.0] match=True
+query_mixed_hits: baseline=[7332.0] candidate=[7332.0] match=True
+query_limit_hits: baseline=[20.0] candidate=[20.0] match=True

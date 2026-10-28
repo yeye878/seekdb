@@ -1,0 +1,75 @@
+{
+  "base_commit": "5bce9e06d1281347ad61344e4b01fab9158c58a2",
+  "candidate_version": "commit containing this manifest",
+  "candidate_source_sha256": {
+    "src/share/text_analysis/ob_token_stream.cpp": "b700ee891b24910c0191b8a3f503e788993705e8dfd47d5f21ca286bc6b09077",
+    "src/share/text_analysis/ob_token_stream.h": "c0efc2264dc99d9c004371e92f580d7c6db84afb035c735f1e7a8e4a493eacb6",
+    "src/storage/fts/ik/ob_ik_char_util.h": "06478be19aa7fa56b0019204231aa0b24cf8b88f7907f5998d679203987c1da1",
+    "src/storage/fts/ob_ik_ft_parser.cpp": "ae7e31b1adaf0f33b7496d9ddf3ccc45b1048704759d473eb78371787554c486"
+  },
+  "candidate_source_git_blob": {
+    "src/share/text_analysis/ob_token_stream.cpp": "3aac9c08374b88ad9b10bc8cfa99a10308083dfe",
+    "src/share/text_analysis/ob_token_stream.h": "c16fddb7ecc216b46714fa5a7644f7dcc3b1f192",
+    "src/storage/fts/ik/ob_ik_char_util.h": "857336d6e1fbc4c2bed1c06df3742feb09154ecd",
+    "src/storage/fts/ob_ik_ft_parser.cpp": "dfb403740280f9aa75c715d0856d8bfd8e2979eb"
+  },
+  "unchanged_official_benchmark_blobs": {
+    "tools/benchmark/fts_large_bench.sh": "a80c1ad9fad94515c8a1838d873ce2d052c42fd1",
+    "tools/benchmark/fts_large_bench_baseline.json": "1296c5a3689978ee908bad8e31b0085465170d19",
+    "tools/benchmark/fts_large_bench_gen.py": "009dddbd7e5c883a7616f144059526b57319bf2d",
+    "tools/benchmark/fts_large_bench_score.py": "791a28e00c09181f4da0d2d26902ae991bb1a1e7",
+    "tools/benchmark/fts_large_bench_setup.sql": "89cba4d8b3ef99ac890b790017934fa479cd79da"
+  },
+  "mysqltest": {
+    "ik_char_classification": {
+      "baseline_candidate_expected_sha256": "4ae4e4f102bd69a38b6a8a3b611501763850b857a9a5c1b23725e6f682686ae8",
+      "result": "byte-identical"
+    },
+    "cn_word": {
+      "baseline_candidate_expected_sha256": "37568de31d9632eacda4f13332fb6b190922b27f1ed53fb1093cfc03cbef1b03",
+      "result": "byte-identical"
+    },
+    "tokenize_function": {
+      "baseline_candidate_expected_sha256": "46485235f362d7a77717fc00263a44122e919ccf3b0df70ff521e0fc38d5dc2d",
+      "result": "byte-identical"
+    },
+    "simple_query": {
+      "baseline_candidate_expected_sha256": "6172886af795b7e6e12f990bfc355985dbf51560da25a10775e20190ed7675e8",
+      "result": "byte-identical"
+    }
+  },
+  "build_logs": {
+    "baseline": {
+      "task_relative_path": "outputs/logs/2026-10-29_build_baseline_final.txt",
+      "sha256": "5b6e7d959457d1af7f8b8caef708beef7d3c5cb06b045f1d2f9c5cfaca532b96",
+      "completion_marker": "[100%] Built target seekdb"
+    },
+    "candidate": {
+      "task_relative_path": "outputs/logs/2026-10-29_build_candidate_final.txt",
+      "sha256": "6eca90d434ca11eef57c82001431908fcbed7a2c3e5f0778ba1bb716e0d9a7f2",
+      "completion_marker": "[100%] Built target seekdb"
+    }
+  },
+  "published_evidence_sha256": {
+    "beng-final-release.txt": "36420bc46803d94522c2aaca6425b22f6aa88c036ccd78b058ede0d8e90ed76b",
+    "beng-final-sanitizers.txt": "d6e67a458f5c244f7251798b3d8bc360cef1c5430975d133e6f9feb8e7ff7a27",
+    "beng-provenance.json": "effcccb965dc7cb5cdbf538105920a7b02ace9900de868828ade224484f2204b",
+    "final-baseline.txt": "1c354644bad32a0a73b5001b4c1ede79ea4939b784dd0b083463af6a022639b7",
+    "final-candidate.txt": "c1e1e0b8eb9f9d1ec8293514e4b451e4aaa6689f5994eb90be5c36a87e1c97e0",
+    "final-comparison.txt": "67ae3e21a37522e28140325be6a8522a26d6b78178bf5ed531362f39c4ddd4aa"
+  },
+  "limitations": [
+    "One final-version WSL benchmark pair; no stable overall speedup established.",
+    "Earlier mixed-version aggregate excluded.",
+    "Raw benchmark git_head=unknown is preserved; source identity is recorded separately.",
+    "Official evaluation and competition platform submission have not been performed."
+  ],
+  "published_copy_processing": "LF line endings; BENG logs are output excerpts omitting unrelated garbled WSL launcher stderr; original task logs are retained unchanged.",
+  "original_task_evidence_sha256": {
+    "outputs/logs/2026-10-28_155801_bench_baseline.txt": "1c354644bad32a0a73b5001b4c1ede79ea4939b784dd0b083463af6a022639b7",
+    "outputs/logs/2026-10-28_160425_bench_candidate.txt": "c1e1e0b8eb9f9d1ec8293514e4b451e4aaa6689f5994eb90be5c36a87e1c97e0",
+    "outputs/logs/2026-10-29_bench_compare_final_pair.txt": "67ae3e21a37522e28140325be6a8522a26d6b78178bf5ed531362f39c4ddd4aa",
+    "outputs/logs/2026-10-29_070951_beng_tokenizer_sanitizers.log": "76f2a9f1c51c0fcfe5b74e04f0051c41f4e556ef617e9999b7d7c52292900fd7",
+    "outputs/logs/2026-10-29_071004_beng_tokenizer_release.log": "1acbb1153990638fcbc036724b0498796a459940b45d3bb3ea28f64ff0f10241"
+  }
+}

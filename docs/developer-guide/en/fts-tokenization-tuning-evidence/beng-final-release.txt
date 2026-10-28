@@ -1,0 +1,20 @@
+COMMAND: cd '/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/beng_tokenizer/2026-10-29_071004_release' && g++ -std=c++20 -O2 -Wall -Wextra -Wno-unused-parameter test.cpp charset.cpp -o verify_beng && ./verify_beng
+DIFFERENTIAL_CHECKS=219193 MISMATCHES=0
+COVERAGE=all-single-bytes,all-byte-pairs,20000-seeded-random,ASCII,mixed-Unicode,embedded-NUL,invalid-UTF8,reset-reopen,binary,fake-wide-guard
+BENCHMARK_NOTE=isolated tokenizer only; not official FTS score
+BENCHMARK_FIELDS=workload,sample,bytes,rounds,baseline_ms,candidate_ms,reduction_pct,checksum
+ascii,1,50176,200,54.4293,16.1182,70.3870,111820800
+ascii,2,50176,200,50.8139,16.4140,67.6978,111820800
+ascii,3,50176,200,58.8954,18.7565,68.1528,111820800
+ascii,4,50176,200,55.6765,16.8934,69.6579,111820800
+ascii,5,50176,200,57.7736,28.9134,49.9540,111820800
+ascii,6,50176,200,56.5291,30.9264,45.2911,111820800
+ascii,7,50176,200,53.8698,21.6715,59.7707,111820800
+mixed,1,34816,200,19.9097,13.4948,32.2200,44339200
+mixed,2,34816,200,21.7177,14.2967,34.1701,44339200
+mixed,3,34816,200,21.7200,9.9306,54.2791,44339200
+mixed,4,34816,200,22.7332,10.2523,54.9014,44339200
+mixed,5,34816,200,20.9084,9.8771,52.7601,44339200
+mixed,6,34816,200,23.4839,10.4755,55.3928,44339200
+mixed,7,34816,200,22.2118,10.8814,51.0107,44339200
+EXIT=0

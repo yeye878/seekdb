@@ -81,6 +81,7 @@ private:
 private:
   const char *curr_token_ptr_;
   int64_t trav_pos_;
+  bool is_utf8mb4_;
 };
 
 class ObTokenNormalizer : public ObITokenStream

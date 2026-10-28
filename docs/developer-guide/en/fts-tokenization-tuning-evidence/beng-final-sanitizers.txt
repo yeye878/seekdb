@@ -1,0 +1,4 @@
+COMMAND: cd '/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/beng_tokenizer/2026-10-29_070951_sanitizers' && g++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wno-unused-parameter test.cpp charset.cpp -o verify_beng && ./verify_beng --no-benchmark
+DIFFERENTIAL_CHECKS=219193 MISMATCHES=0
+COVERAGE=all-single-bytes,all-byte-pairs,20000-seeded-random,ASCII,mixed-Unicode,embedded-NUL,invalid-UTF8,reset-reopen,binary,fake-wide-guard
+EXIT=0

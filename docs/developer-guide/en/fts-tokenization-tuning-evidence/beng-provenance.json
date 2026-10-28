@@ -1,0 +1,75 @@
+{
+  "base_commit": "5bce9e06d1281347ad61344e4b01fab9158c58a2",
+  "generator": {
+    "path": "tests\\verify_beng_tokenizer.py",
+    "sha256": "04ecef7adab5ffbb925e4f7724c18828eb25647c05ac40189e05c997e82eeb30"
+  },
+  "candidate_source_sha256": {
+    "src/share/text_analysis/ob_token_stream.h": "c0efc2264dc99d9c004371e92f580d7c6db84afb035c735f1e7a8e4a493eacb6",
+    "src/share/text_analysis/ob_token_stream.cpp": "b700ee891b24910c0191b8a3f503e788993705e8dfd47d5f21ca286bc6b09077"
+  },
+  "corrected_harness_exact_source_checks": {
+    "2026-10-29_070951_sanitizers": {
+      "baseline_code_exact_source_match": true,
+      "candidate_code_exact_source_match": true,
+      "files_sha256": {
+        "test.cpp": "6131a9573ce01e287dd66d6704c07f442d16c6581bc045221ee35576206164bf",
+        "adapters.h": "f65381e81a0bf6168b389024db3aaa19d1be90ceefc6686ce01242a4930b4536",
+        "charset.cpp": "ddbfc36930d6bf7151df2b6df942bd9e7d264f531ba04ef54d08468dc1e844d7",
+        "manifest.json": "cb9da00f640a06a29ffa8c41812f8eeda4ef0a12187cf5921cd64408128a0dd0"
+      }
+    },
+    "2026-10-29_071004_release": {
+      "baseline_code_exact_source_match": true,
+      "candidate_code_exact_source_match": true,
+      "files_sha256": {
+        "test.cpp": "6131a9573ce01e287dd66d6704c07f442d16c6581bc045221ee35576206164bf",
+        "adapters.h": "f65381e81a0bf6168b389024db3aaa19d1be90ceefc6686ce01242a4930b4536",
+        "charset.cpp": "ddbfc36930d6bf7151df2b6df942bd9e7d264f531ba04ef54d08468dc1e844d7",
+        "manifest.json": "cb9da00f640a06a29ffa8c41812f8eeda4ef0a12187cf5921cd64408128a0dd0"
+      }
+    }
+  },
+  "unchanged_charset_support_files": {
+    "src/oblib/lib/charset/ob_ctype.h": {
+      "base_blob": "29bb254be82e5d52f759aa91c1ac2718034ff6f1",
+      "sha256": "ff5fd6b82032f56f457e21041e4a33d1dd40cb30eba7dd10b44daf2ecca4be50"
+    },
+    "src/oblib/lib/charset/ob_ctype_utf8.cc": {
+      "base_blob": "2cec28c441ef7b46cccad167b0a951943dda55bc",
+      "sha256": "1e437f1a88cb43ac9921e8e6beaf9cb393ff1d52e251977b3dc457650d6cc451"
+    },
+    "src/oblib/lib/charset/ob_ctype_bin.cc": {
+      "base_blob": "902f6fe7401599ee3dea984f066e143beed1128c",
+      "sha256": "5db7f24bde50b315bc7abaaef297b0588d2e8d73b6a0de34ec2a9912725504b9"
+    },
+    "src/oblib/lib/charset/ob_ctype_mb.cc": {
+      "base_blob": "2e7917d32a23510bf70d8821cbbf5b73ca464324",
+      "sha256": "20173099dc122c9d76d9ce657715772f66f2a621265826695f4b4149eeef4169"
+    },
+    "src/oblib/lib/charset/ob_ctype_utf8_tab.h": {
+      "base_blob": "1ee303af1228d6e06cae739409b8772cd9a21ca3",
+      "sha256": "a54f4d7a9daeda31e9d3f33fb6749f5b781841529fcea41656d58bb6e5e16291"
+    }
+  },
+  "superseded_prior_evidence": {
+    "path": "outputs\\beng_tokenizer\\2026-10-29_ctype_lookup\\test.cpp",
+    "sha256": "dddeeb4cc65c40467209ecaf17091df586871fdd8d8b8069aebd5beb23fb86a4",
+    "findings": {
+      "baseline_namespace_matches_baseline_source": false,
+      "candidate_namespace_matches_final_source": false,
+      "baseline_delimiter_matches_final_candidate": true,
+      "candidate_delimiter_matches_original_baseline": true
+    },
+    "interpretation": "Prior ctype_lookup logs do not compare original baseline against final candidate; exclude prior 45%/23% microbenchmark claim. Preserved unchanged for audit."
+  },
+  "corrected_release_paired_sample_median_reduction_pct": {
+    "ascii": 67.6978,
+    "mixed": 52.7601
+  },
+  "limitations": [
+    "Isolated tokenizer microbenchmark is not a database benchmark or official score.",
+    "fake-wide is a fallback adapter, not real UTF16 SQL integration.",
+    "WSL runtime noise is visible in individual microbenchmark samples."
+  ]
+}

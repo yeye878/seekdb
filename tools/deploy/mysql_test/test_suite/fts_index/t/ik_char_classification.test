@@ -1,0 +1,46 @@
+# owner group: storage
+# Classification and shared-character dispatch must preserve complete token sets.
+# Expected Chinese sets are taken from the existing cn_word regression.
+--disable_query_log
+--disable_warnings
+DROP DATABASE IF EXISTS t12_fts_regression;
+--enable_warnings
+CREATE DATABASE t12_fts_regression DEFAULT CHARACTER SET utf8mb4;
+USE t12_fts_regression;
+SET NAMES utf8mb4;
+SET ob_query_timeout = 1000000000;
+
+SELECT JSON_CONTAINS(TOKENIZE('HELLO oceanbase 123', 'ik'), JSON_ARRAY('hello', 'oceanbase', '123'))
+       AND JSON_LENGTH(TOKENIZE('HELLO oceanbase 123', 'ik')) = 3 AS ascii_token_set;
+SELECT JSON_LENGTH(TOKENIZE(' ，。！？ ', 'ik')) = 0 AS punctuation_only;
+SELECT JSON_CONTAINS(TOKENIZE('中华人民共和国人民大会堂', 'ik',
+       '[{"additional_args":[{"ik_mode":"smart"}]}]'), JSON_ARRAY('中华人民共和国', '人民大会堂'))
+       AND JSON_LENGTH(TOKENIZE('中华人民共和国人民大会堂', 'ik',
+       '[{"additional_args":[{"ik_mode":"smart"}]}]')) = 2 AS smart_token_set;
+SELECT JSON_CONTAINS(TOKENIZE('中华人民共和国人民大会堂', 'ik',
+       '[{"additional_args":[{"ik_mode":"max_word"}]}]'),
+       JSON_ARRAY('大会', '人民大会堂', '大会堂', '共和国', '人民大会', '人民共和国',
+                  '中华人民', '共和', '会堂', '中华', '中华人民共和国', '国人', '华人', '人民'))
+       AND JSON_LENGTH(TOKENIZE('中华人民共和国人民大会堂', 'ik',
+       '[{"additional_args":[{"ik_mode":"max_word"}]}]')) = 14 AS max_word_token_set;
+SELECT JSON_CONTAINS(TOKENIZE('OceanBase是一款非常稳定数据库，在110个星球上都非常著名，这简直难以置信', 'ik'),
+       JSON_ARRAY('这简直', '难以置信', '著名', '非常', '在', 'oceanbase', '稳定', '110个',
+                  '上', '是', '数据库', '星球', '一款', '都'))
+       AND JSON_LENGTH(TOKENIZE('OceanBase是一款非常稳定数据库，在110个星球上都非常著名，这简直难以置信', 'ik')) = 14
+       AS mixed_token_set;
+CREATE TABLE docs (id INT PRIMARY KEY, body TEXT) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO docs VALUES (1, '中华人民共和国人民大会堂 hello 110个'),
+                       (2, 'hello world'), (3, '数据库 oceanbase'), (4, '无关文本');
+INSERT INTO docs VALUES (5, CONCAT(REPEAT('batchword ', 200), '尾'));
+CREATE FULLTEXT INDEX fts_body ON docs(body) WITH PARSER ik PARSER_PROPERTIES=(ik_mode='max_word');
+SELECT id AS english_match FROM docs WHERE MATCH(body) AGAINST('hello' IN BOOLEAN MODE) ORDER BY id;
+SELECT COUNT(*) AS long_document_match FROM docs WHERE id=5 AND MATCH(body) AGAINST('batchword' IN BOOLEAN MODE);
+SELECT id AS chinese_match FROM docs WHERE MATCH(body) AGAINST('数据库' IN BOOLEAN MODE) ORDER BY id;
+SELECT id AS overlapping_match FROM docs WHERE MATCH(body) AGAINST('人民' IN BOOLEAN MODE) ORDER BY id;
+UPDATE docs SET body='changed' WHERE id=2;
+SELECT id AS updated_match FROM docs WHERE MATCH(body) AGAINST('hello' IN BOOLEAN MODE) ORDER BY id;
+DELETE FROM docs WHERE id=1;
+SELECT COUNT(*) AS deleted_match FROM docs WHERE MATCH(body) AGAINST('hello' IN BOOLEAN MODE);
+DROP DATABASE t12_fts_regression;
+USE test;
+--enable_query_log
