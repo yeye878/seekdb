@@ -36,6 +36,35 @@ select tokenize('hello world', 'space', '[{"output": "all"}]');
 select tokenize('hello world', 'space', '[{"output": "default"}]');
 
 
+# repeated BENG calls, key isolation, and bounded-cache eviction
+
+select tokenize('cache alpha beta', 'beng');
+select tokenize('cache alpha beta', 'beng');
+select tokenize('cache beta gamma', 'beng');
+select tokenize('cache alpha beta', 'beng', '[{"output": "all"}]');
+select tokenize('cache alpha beta', 'beng', '[{"output": "default"}]');
+select tokenize(null, 'beng');
+select tokenize(null, 'beng');
+select tokenize('', null);
+select tokenize('', null);
+select tokenize(_utf8mb4'cache collation' collate utf8mb4_bin, 'beng');
+select tokenize(_utf8mb4'cache collation' collate utf8mb4_general_ci, 'beng');
+select tokenize('cache entry one', 'beng');
+select tokenize('cache entry two', 'beng');
+select tokenize('cache entry three', 'beng');
+select tokenize('cache entry four', 'beng');
+select tokenize('cache entry five', 'beng');
+select tokenize('cache entry one', 'beng');
+
+connect (cache_conn,$OBMYSQL_MS0,$OBMYSQL_USR,$OBMYSQL_PWD,test,$OBMYSQL_PORT);
+connection cache_conn;
+use fts;
+select tokenize('cache reconnect', 'beng');
+disconnect cache_conn;
+connection default;
+select tokenize('cache reconnect', 'beng');
+
+
 # output empty result
 
 select tokenize("");
@@ -89,6 +118,8 @@ select tokenize('hello world', 'ngram', '[{"output": "default"]');
 # from table
 
 select tokenize(title, "ngram", "[{}]") as ttoken, tokenize(body, 'space', '[{"output": "all"}]') as btoken from memo;
+
+select tokenize(title, 'beng') from memo where id in (5, 6);
 
 select * from memo where '电影' member of (tokenize(title, "ngram")) OR 'growth' member of (tokenize(body, "space"));
 

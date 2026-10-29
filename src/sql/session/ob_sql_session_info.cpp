@@ -31,6 +31,7 @@
 #include "sql/pl/ob_pl_package.h"
 #include "sql/pl/ob_pl_server_cursor.h"
 #include "share/ob_server_struct.h"
+#include "sql/session/ob_fts_tokenize_cache.h"
 #include "sql/plan_cache/ob_ps_cache.h"
 #include "sql/optimizer/stat/ob_opt_stat_manager.h" // for ObOptStatManager
 #include "sql/session/ob_user_resource_mgr.h"
@@ -148,6 +149,7 @@ ObSQLSessionInfo::ObSQLSessionInfo() :
       ddl_info_(),
       is_table_name_hidden_(false),
       piece_cache_(NULL),
+      fts_tokenize_cache_(NULL),
       is_load_data_exec_session_(false),
       pl_exact_err_msg_(),
       is_varparams_sql_prepare_(false),
@@ -554,6 +556,11 @@ void ObSQLSessionInfo::destroy(bool skip_sys_var)
       piece_cache_->~ObPieceCache();
       get_session_allocator().free(piece_cache_);
       piece_cache_ = NULL;
+    }
+    if (NULL != fts_tokenize_cache_) {
+      fts_tokenize_cache_->~ObFTTokenizeCache();
+      get_session_allocator().free(fts_tokenize_cache_);
+      fts_tokenize_cache_ = NULL;
     }
     // Non-distributed needs it, distributed also needs it, used for cleaning up the global variable values of package
     reset_all_package_state();
@@ -1632,6 +1639,17 @@ ObPieceCache* ObSQLSessionInfo::get_piece_cache(bool need_init) {
     }
   }
   return piece_cache_;
+}
+
+ObFTTokenizeCache* ObSQLSessionInfo::get_fts_tokenize_cache(bool need_init) {
+  if (NULL == fts_tokenize_cache_ && need_init) {
+    void *buf = get_session_allocator().alloc(sizeof(ObFTTokenizeCache));
+    if (NULL != buf) {
+      MEMSET(buf, 0, sizeof(ObFTTokenizeCache));
+      fts_tokenize_cache_ = new (buf) ObFTTokenizeCache(get_session_allocator());
+    }
+  }
+  return fts_tokenize_cache_;
 }
 
 template <typename AllocatorT>

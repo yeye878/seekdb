@@ -27,6 +27,8 @@
 #include "lib/utility/ob_macro_utils.h"
 #include "object/ob_object.h"
 #include "sql/resolver/ddl/ob_fts_index_builder_util.h"
+#include "sql/session/ob_fts_tokenize_cache.h"
+#include "sql/session/ob_sql_session_info.h"
 #include "share/ob_json_access_utils.h"
 #include "data_plane/fts/ob_fts_parser_helper.h"
 #include "data_plane/fts/dict/ob_gen_dic_loader.h"
@@ -59,17 +61,54 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
 
   ObIJsonBase *json_result = nullptr;
   TokenizeParam param;
+  ObSQLSessionInfo *session = nullptr;
+  ObFTTokenizeCache *cache = nullptr;
+  ObString cached_result;
+  bool cache_hit = false;
 
   // check param num, which is checked in ObExprOperator::calc_result_typeN.
   if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(parse_param(expr, ctx, temp_allocator, param))) {
+  } else if (param.cacheable_
+             && OB_NOT_NULL(session = ctx.exec_ctx_.get_my_session())
+             && OB_NOT_NULL(cache = session->get_fts_tokenize_cache(true))) {
+    cache_hit = cache->get(param.fulltext_,
+                           param.parser_name_,
+                           param.properties_,
+                           param.meta_.get_collation_type(),
+                           param.output_mode_,
+                           temp_allocator,
+                           cached_result);
+  }
+
+  if (OB_FAIL(ret)) {
+  } else if (cache_hit) {
+    if (OB_FAIL(ObJsonExprHelper::pack_json_str_res(expr, ctx, expr_datum, cached_result))) {
+    }
   } else if (OB_FAIL(tokenize_fulltext(param, param.output_mode_, temp_allocator, json_result))) {
+  } else if (OB_NOT_NULL(cache)) {
+    ObString raw_result;
+    if (OB_ISNULL(json_result)) {
+      expr_datum.set_null();
+    } else if (OB_FAIL(share::ObJsonWrapper::get_raw_binary(json_result, raw_result, &temp_allocator))) {
+    } else if (OB_FAIL(ObJsonExprHelper::pack_json_str_res(expr, ctx, expr_datum, raw_result))) {
+    } else {
+      int tmp_ret = cache->put(param.fulltext_,
+                               param.parser_name_,
+                               param.properties_,
+                               param.meta_.get_collation_type(),
+                               param.output_mode_,
+                               raw_result);
+      if (OB_FAIL(tmp_ret)) {
+        LOG_WARN("failed to put BENG tokenize result into session cache", K(tmp_ret));
+      }
+    }
   } else if (OB_FAIL(ObJsonExprHelper::pack_json_res(expr,
-                                                     ctx,
-                                                     temp_allocator,
-                                                     json_result,
-                                                     expr_datum))) {
+                                                      ctx,
+                                                      temp_allocator,
+                                                      json_result,
+                                                      expr_datum))) {
   }
 
   return ret;
@@ -128,6 +167,7 @@ ObExprTokenize::TokenizeParam ::TokenizeParam()
     parser_name_(ObString(OB_DEFAULT_FULLTEXT_PARSER_NAME)),
     meta_(),
     fulltext_(),
+    cacheable_(false),
     output_mode_(OUTPUT_MODE::DEFAULT)
 {
 }
@@ -330,6 +370,8 @@ int ObExprTokenize::parse_parser_name(const ObExpr &expr, ObEvalCtx &ctx, Tokeni
       raw_parser_name = name.trim();
     }
   }
+
+  param.cacheable_ = 0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_BENG);
 
   if (OB_FAIL(ret)) {
     // already logged

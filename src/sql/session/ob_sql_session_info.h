@@ -96,6 +96,7 @@ class ObPsStmtInfo;
 class ObStmt;
 class ObSQLSessionInfo;
 class ObPieceCache;
+class ObFTTokenizeCache;
 class ObIQueryResultSender;
 class ObPlanItemMgr;
 
@@ -818,6 +819,7 @@ public:
   // piece
   ObPieceCache *get_piece_cache(bool need_init = false);
   void set_piece_cache(void* piece_cache) { piece_cache_ = reinterpret_cast<ObPieceCache*>(piece_cache); }
+  ObFTTokenizeCache *get_fts_tokenize_cache(bool need_init = false);
 
   share::schema::ObUserLoginInfo get_login_info () { return login_info_; }
   int set_login_info(const share::schema::ObUserLoginInfo &login_info);
@@ -987,6 +989,7 @@ private:
   ObSessionDDLInfo ddl_info_;
   bool is_table_name_hidden_;
   ObPieceCache* piece_cache_;
+  ObFTTokenizeCache *fts_tokenize_cache_;
   bool is_load_data_exec_session_;
   ObSqlString pl_exact_err_msg_;
   bool is_varparams_sql_prepare_;
