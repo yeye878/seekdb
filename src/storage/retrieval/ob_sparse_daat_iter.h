@@ -29,13 +29,14 @@ namespace storage
 
 struct ObSRMergeItem
 {
-  ObSRMergeItem() : relevance_(0.0), iter_idx_(-1), equal_with_next_(false) {}
+  ObSRMergeItem() : relevance_(0.0), iter_idx_(-1), equal_with_next_(false), id_datum_(nullptr) {}
   ~ObSRMergeItem() = default;
   TO_STRING_KV(K_(iter_idx), K_(relevance), K_(equal_with_next));
 
   double relevance_;
   int64_t iter_idx_;
   bool equal_with_next_;
+  const ObDatum *id_datum_;
 };
 
 struct ObSRMergeCmp
@@ -46,9 +47,12 @@ struct ObSRMergeCmp
   int init(sql::ObDatumMeta id_meta, const ObFixedArray<const ObDatum *, ObIAllocator> *iter_ids);
   int cmp(const ObSRMergeItem &l, const ObSRMergeItem &r, int64_t &cmp_ret);
 private:
-  inline const ObDatum &get_id_datum(const int64_t iter_idx)
+  inline const ObDatum &get_id_datum(const ObSRMergeItem &item)
   {
-    const ObDatum *datum = iter_ids_->at(iter_idx);
+    if (nullptr != item.id_datum_) {
+      return *item.id_datum_;
+    }
+    const ObDatum *datum = iter_ids_->at(item.iter_idx_);
     OB_ASSERT(nullptr != datum);
     return *datum;
   }
@@ -58,6 +62,7 @@ private:
   //       and avoid deep copy into merge heap here
   const ObFixedArray<const ObDatum *, ObIAllocator> *iter_ids_;
   bool is_inited_;
+  bool is_binary_id_;
 };
 
 typedef ObSimpleRowsMerger<ObSRMergeItem, ObSRMergeCmp> ObSRSimpleMerger;

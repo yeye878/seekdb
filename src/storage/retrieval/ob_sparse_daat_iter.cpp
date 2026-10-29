@@ -43,7 +43,8 @@ static int compare_binary_retrieval_ids(
 ObSRMergeCmp::ObSRMergeCmp()
   : cmp_func_(nullptr),
     iter_ids_(nullptr),
-    is_inited_(false)
+    is_inited_(false),
+    is_binary_id_(false)
 {
 }
 
@@ -60,7 +61,10 @@ int ObSRMergeCmp::init(
     cmp_func_ = basic_funcs->null_first_cmp_;
     if (CS_TYPE_BINARY == id_meta.cs_type_
         && (ObVarcharType == id_meta.type_ || ObCharType == id_meta.type_)) {
+      is_binary_id_ = true;
       cmp_func_ = compare_binary_retrieval_ids;
+    } else {
+      is_binary_id_ = false;
     }
     if (OB_ISNULL(cmp_func_)) {
       ret = OB_ERR_UNEXPECTED;
@@ -79,10 +83,20 @@ int ObSRMergeCmp::cmp(
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
+  } else if (is_binary_id_) {
+    const ObDatum &dl = get_id_datum(l);
+    const ObDatum &dr = get_id_datum(r);
+    if (dl.is_null() || dr.is_null()) {
+      cmp_ret = dl.is_null() ? (dr.is_null() ? 0 : -1) : 1;
+    } else {
+      const int64_t len = MIN(dl.len_, dr.len_);
+      const int cmp = len > 0 ? MEMCMP(dl.ptr_, dr.ptr_, len) : 0;
+      cmp_ret = cmp > 0 ? 1 : (cmp < 0 ? -1 : (dl.len_ > dr.len_) - (dl.len_ < dr.len_));
+    }
   } else {
     int tmp_ret = 0;
     if (OB_FAIL(cmp_func_(
-            get_id_datum(l.iter_idx_), get_id_datum(r.iter_idx_), tmp_ret, nullptr))) {
+            get_id_datum(l), get_id_datum(r), tmp_ret, nullptr))) {
     } else {
       cmp_ret = tmp_ret;
     }
@@ -329,6 +343,7 @@ int ObSRDaaTIterImpl::fill_merge_heap()
     } else if (OB_NOT_NULL(iter_param_->dim_weights_) && FALSE_IT(item.relevance_ = item.relevance_ * iter_param_->field_boost_ * iter_param_->dim_weights_->at(iter_idx))) {
     } else if (OB_FAIL(dim_iter->get_curr_id(iter_domain_ids_[iter_idx]))) {
     } else if (FALSE_IT(item.iter_idx_ = iter_idx)) {
+    } else if (FALSE_IT(item.id_datum_ = iter_domain_ids_[iter_idx])) {
     } else if (OB_FAIL(merge_heap_->push(item))) {
     } else {
       LOG_DEBUG("push item to merge heap", K(ret), K(i), K(iter_idx), K(next_round_cnt_), K(item), K(iter_domain_ids_[iter_idx]));

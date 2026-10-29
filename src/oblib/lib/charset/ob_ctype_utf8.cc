@@ -307,11 +307,24 @@ static int ob_strnncoll_utf8mb4(const ObCharsetInfo *cs,
                      const unsigned char *dst, size_t dstlen,
                      bool t_is_prefix)
 {
+  if (src == dst && srclen == dstlen) {
+    return 0;
+  }
+  if (!t_is_prefix && srclen == dstlen && (0 == srclen || 0 == memcmp(src, dst, srclen))) {
+    return 0;
+  }
   ob_wc_t src_wc = 0, dst_wc = 0;
   const unsigned char *se = src + srclen;
   const unsigned char *te = dst + dstlen;
   ObUnicaseInfo *uni_plane = cs->caseinfo;
   while ( src < se && dst < te ) {
+    while ( src < se && dst < te && *src == *dst && *src < 0x80 ) {
+      src++;
+      dst++;
+    }
+    if ( src >= se || dst >= te ) {
+      break;
+    }
     int s_res = ob_mb_wc_utf8mb4(cs, &src_wc, src, se);
     int t_res = ob_mb_wc_utf8mb4(cs, &dst_wc, dst, te);
     if ( s_res <= 0 || t_res <= 0 ) {
@@ -377,11 +390,24 @@ static int ob_strnncollsp_utf8mb4(const ObCharsetInfo *cs,
                        const unsigned char *dst, size_t dstlen,
                        bool diff_if_only_endspace_difference)
 {
+  if (src == dst && srclen == dstlen) {
+    return 0;
+  }
+  if (srclen == dstlen && (0 == srclen || 0 == memcmp(src, dst, srclen))) {
+    return 0;
+  }
   int res;
   ob_wc_t src_wc = 0, dst_wc = 0;
   const unsigned char *se= src + srclen, *te= dst + dstlen;
   ObUnicaseInfo *uni_plane= cs->caseinfo;
   while ( src < se && dst < te ) {
+    while ( src < se && dst < te && *src == *dst && *src < 0x80 ) {
+      src++;
+      dst++;
+    }
+    if ( src >= se || dst >= te ) {
+      break;
+    }
     int s_res= ob_mb_wc_utf8mb4(cs, &src_wc, src, se);
     int t_res= ob_mb_wc_utf8mb4(cs, &dst_wc, dst, te);
     if ( s_res <= 0 || t_res <= 0 ) {

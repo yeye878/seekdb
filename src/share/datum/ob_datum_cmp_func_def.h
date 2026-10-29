@@ -376,8 +376,14 @@ struct ObDatumStrCmpImpl
   static int OB_INLINE cmp(const ObDatum &l, const ObDatum &r, int &cmp_ret,
                            const ObCollationType cs, const bool with_end_space)
   {
-    cmp_ret = ObCharset::strcmpsp(cs, l.ptr_, l.len_, r.ptr_, r.len_, with_end_space);
-    cmp_ret = cmp_ret > 0 ? 1 : (cmp_ret < 0 ? -1 : 0);
+    if (l.ptr_ == r.ptr_ && l.len_ == r.len_) {
+      cmp_ret = 0;
+    } else if (!with_end_space && l.len_ == r.len_ && (0 == l.len_ || 0 == memcmp(l.ptr_, r.ptr_, l.len_))) {
+      cmp_ret = 0;
+    } else {
+      cmp_ret = ObCharset::strcmpsp(cs, l.ptr_, l.len_, r.ptr_, r.len_, with_end_space);
+      cmp_ret = cmp_ret > 0 ? 1 : (cmp_ret < 0 ? -1 : 0);
+    }
     return OB_SUCCESS;
   }
 };
@@ -388,6 +394,22 @@ struct ObDatumStrCmp : public ObDefined<SupportedCollection<CS_TYPE>::defined_>
   inline static int cmp(const ObDatum &l, const ObDatum &r, int &cmp_ret)
   {
     return ObDatumStrCmpImpl::cmp(l, r, cmp_ret, CS_TYPE, WITH_END_SPACE);
+  }
+};
+
+template <>
+struct ObDatumStrCmp<CS_TYPE_BINARY, false> : public ObDefined<true>
+{
+  inline static int cmp(const ObDatum &l, const ObDatum &r, int &cmp_ret)
+  {
+    if (l.ptr_ == r.ptr_ && l.len_ == r.len_) {
+      cmp_ret = 0;
+    } else {
+      const size_t len = OB_MIN(l.len_, r.len_);
+      const int cmp = len > 0 ? memcmp(l.ptr_, r.ptr_, len) : 0;
+      cmp_ret = cmp > 0 ? 1 : (cmp < 0 ? -1 : (l.len_ > r.len_) - (l.len_ < r.len_));
+    }
+    return OB_SUCCESS;
   }
 };
 
