@@ -139,7 +139,7 @@ select 1 = 1 as mixed_group_reaches_terminal;
 mixed_group_reaches_terminal
 1
 select good_result = 'mock:group-terminal' and failed_result is null
-       as terminal_group_published_together
+as terminal_group_published_together
 from ai_column_p0_worker.mixed_docs where id = 7;
 terminal_group_published_together
 1
@@ -157,14 +157,14 @@ retry_result varchar(400) AI COLUMN (
 AI_COMPLETE('p0_worker_complete', content)
 ) WITH (sync_mode='async', max_retries=1)
 );
-insert into ai_column_p0_worker.alternating_docs(id, content) values(8, 'retry-once');
+insert into ai_column_p0_worker.alternating_docs(id, content) values(8, 'alternate-retry-once');
 select 0 = 0 as alternating_no_partial_visibility;
 alternating_no_partial_visibility
 1
 select 1 = 1 as alternating_group_terminal;
 alternating_group_terminal
 1
-select flip_result = 'mock:flip-flop' and retry_result = 'mock:retry-once'
+select flip_result = 'mock:flip-flop' and retry_result = 'mock:alternate-retry-once'
        as cached_success_not_recomputed
 from ai_column_p0_worker.alternating_docs where id = 8;
 cached_success_not_recomputed

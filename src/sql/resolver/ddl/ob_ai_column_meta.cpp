@@ -2656,6 +2656,44 @@ bool wildcard_table_matches(const ObString &sql,
   return false;
 }
 
+int ai_column_storage_pending(const ObAiColumnMeta &meta, bool &pending)
+{
+  int ret = OB_SUCCESS;
+  pending = false;
+  common::ObISQLClient *proxy = GCTX.sql_proxy_;
+  if (OB_ISNULL(proxy)) {
+    // The registry value is the only available state during early startup.
+  } else {
+    ObSqlString sql;
+    common::ObISQLClient::ReadResult res;
+    if (OB_FAIL(sql.append("select 1 from "))) {
+    } else if (OB_FAIL(ai_append_ident(sql, meta.db_name_))) {
+    } else if (OB_FAIL(sql.append("."))) {
+    } else if (OB_FAIL(ai_append_ident(sql, meta.table_name_))) {
+    } else if (OB_FAIL(sql.append(" where "))) {
+    } else if (OB_FAIL(ai_append_ident(sql, meta.state_column_name_))) {
+    } else if (OB_FAIL(sql.append(" > 0 limit 1"))) {
+    } else if (OB_FAIL(proxy->read(res, sql.ptr()))) {
+      LOG_WARN("failed to verify the ai column state for strict read", K(ret),
+               K(meta.table_name_), K(meta.column_name_));
+    } else {
+      common::sqlclient::ObMySQLResult *result = res.get_result();
+      if (OB_ISNULL(result)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        const int next_ret = result->next();
+        if (OB_SUCCESS == next_ret) {
+          pending = true;
+        } else if (OB_ITER_END != next_ret) {
+          ret = next_ret;
+          LOG_WARN("failed to read the ai column state for strict read", K(ret));
+        }
+      }
+    }
+  }
+  return ret;
+}
+
 int append_quoted_ident(ObSqlString &out, const ObString &name)
 {
   int ret = OB_SUCCESS;
@@ -3082,6 +3120,9 @@ int ai_column_check_strict_read(const ObString &sql,
         if (OB_FAIL(ObAiColumnRegistry::get_instance().get_pending(
                      meta.db_name_, meta.table_name_, meta.column_name_, pending))) {
           LOG_WARN("failed to get the pending flag of the ai column", K(ret),
+                   K(meta.column_name_));
+        } else if (!pending && OB_FAIL(ai_column_storage_pending(meta, pending))) {
+          LOG_WARN("failed to verify the ai column state for strict read", K(ret),
                    K(meta.column_name_));
         } else if (pending) {
           ret = OB_ERR_AI_COLUMN_UNFINISHED_TASK;

@@ -1874,6 +1874,10 @@ int ObSql::handle_ps_execute(const ObPsStmtId client_stmt_id,
           sql = rewritten_sql;
         }
       }
+      if (OB_FAIL(ret)) {
+        // Do not let generate_ps_sql_id() overwrite an AI-column rejection.
+        return ret;
+      }
       context.cur_sql_ = sql;
       context.raw_sql_ = ps_info->get_ps_sql();
 #ifndef NDEBUG

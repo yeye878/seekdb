@@ -77,11 +77,9 @@ create database ai_column_strict_other;
 create table ai_column_strict_other.docs(id bigint primary key);
 select * from ai_column_strict_other.docs;
 drop database ai_column_strict_other;
-prepare strict_select from 'select result from ai_column_retry_strict.docs where id = 2';
 --replace_regex /table_id=[0-9]+, column_id=[0-9]+/table_id=<table_id>, column_id=<column_id>/
 --error 11120
-execute strict_select;
-deallocate prepare strict_select;
+prepare strict_select from 'select result from ai_column_retry_strict.docs where id = 2';
 # Strictness is column-wide, not limited to rows selected by the query.
 # Row 2 is READY, but rows 1 and 3 still make RESULT incomplete.
 --replace_regex /table_id=[0-9]+, column_id=[0-9]+/table_id=<table_id>, column_id=<column_id>/

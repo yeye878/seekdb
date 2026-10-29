@@ -199,7 +199,7 @@ set session timestamp = 1700000000;
 insert into ai_column_p0_worker.retry_docs(id, content) values(6, 'slow-old');
 --real_sleep 0.3
 alter table ai_column_p0_worker.retry_docs retry ai column result where id = 6;
---real_sleep 0.3
+--real_sleep 1.5
 alter table ai_column_p0_worker.retry_docs retry ai column result where id = 6;
 let $retry = 150;
 let $done = 0;
@@ -285,7 +285,7 @@ create table ai_column_p0_worker.alternating_docs(
     AI_COMPLETE('p0_worker_complete', content)
   ) WITH (sync_mode='async', max_retries=1)
 );
-insert into ai_column_p0_worker.alternating_docs(id, content) values(8, 'retry-once');
+insert into ai_column_p0_worker.alternating_docs(id, content) values(8, 'alternate-retry-once');
 let $retry = 150;
 let $partial = 0;
 let $terminal = 0;
@@ -319,7 +319,7 @@ while ($retry)
 }
 eval select $partial = 0 as alternating_no_partial_visibility;
 eval select $terminal = 1 as alternating_group_terminal;
-select flip_result = 'mock:flip-flop' and retry_result = 'mock:retry-once'
+select flip_result = 'mock:flip-flop' and retry_result = 'mock:alternate-retry-once'
        as cached_success_not_recomputed
 from ai_column_p0_worker.alternating_docs where id = 8;
 --exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py assert 19122 alternating-cache

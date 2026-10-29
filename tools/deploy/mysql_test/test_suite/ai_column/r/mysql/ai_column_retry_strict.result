@@ -63,9 +63,7 @@ select * from ai_column_strict_other.docs;
 id
 drop database ai_column_strict_other;
 prepare strict_select from 'select result from ai_column_retry_strict.docs where id = 2';
-execute strict_select;
 ERROR HY000: AI column has unfinished tasks for table_id=<table_id>, column_id=<column_id>
-deallocate prepare strict_select;
 select result from ai_column_retry_strict.docs where id = 2;
 ERROR HY000: AI column has unfinished tasks for table_id=<table_id>, column_id=<column_id>
 select id, result from ai_column_retry_strict.docs order by id;
