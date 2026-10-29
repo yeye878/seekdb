@@ -302,6 +302,11 @@ static inline void ob_tosort_unicode(ObUnicaseInfo *uni_plane, ob_wc_t *wc, unsi
   }
 }
 
+static inline unsigned char ob_tosort_ascii(const unsigned char c)
+{
+  return c >= 'a' && c <= 'z' ? static_cast<unsigned char>(c - ('a' - 'A')) : c;
+}
+
 static int ob_strnncoll_utf8mb4(const ObCharsetInfo *cs,
                      const unsigned char *src, size_t srclen,
                      const unsigned char *dst, size_t dstlen,
@@ -324,6 +329,16 @@ static int ob_strnncoll_utf8mb4(const ObCharsetInfo *cs,
     }
     if ( src >= se || dst >= te ) {
       break;
+    }
+    if (*src < 0x80 && *dst < 0x80) {
+      const unsigned char src_sort = ob_tosort_ascii(*src);
+      const unsigned char dst_sort = ob_tosort_ascii(*dst);
+      if (src_sort != dst_sort) {
+        return src_sort > dst_sort ? 1 : -1;
+      }
+      src++;
+      dst++;
+      continue;
     }
     int s_res = ob_mb_wc_utf8mb4(cs, &src_wc, src, se);
     int t_res = ob_mb_wc_utf8mb4(cs, &dst_wc, dst, te);
@@ -407,6 +422,16 @@ static int ob_strnncollsp_utf8mb4(const ObCharsetInfo *cs,
     }
     if ( src >= se || dst >= te ) {
       break;
+    }
+    if (*src < 0x80 && *dst < 0x80) {
+      const unsigned char src_sort = ob_tosort_ascii(*src);
+      const unsigned char dst_sort = ob_tosort_ascii(*dst);
+      if (src_sort != dst_sort) {
+        return src_sort > dst_sort ? 1 : -1;
+      }
+      src++;
+      dst++;
+      continue;
     }
     int s_res= ob_mb_wc_utf8mb4(cs, &src_wc, src, se);
     int t_res= ob_mb_wc_utf8mb4(cs, &dst_wc, dst, te);
