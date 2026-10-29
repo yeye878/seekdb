@@ -17,6 +17,8 @@
 #define USING_LOG_PREFIX SQL_OPT
 
 #include "sql/optimizer/ob_log_values_table_access.h"
+#include "sql/engine/basic/ob_file_scan_utils.h"
+#include "sql/resolver/expr/ob_raw_expr_util.h"
 #include "src/sql/optimizer/ob_join_order.h"
 
 using namespace oceanbase::common;
@@ -129,17 +131,46 @@ int ObLogValuesTableAccess::get_op_exprs(ObIArray<ObRawExpr*> &all_exprs)
 int ObLogValuesTableAccess::allocate_expr_post(ObAllocExprContext &ctx)
 {
   int ret = OB_SUCCESS;
+  const bool is_file_table = OB_NOT_NULL(table_def_)
+                             && OB_NOT_NULL(table_def_->file_table_def_);
   for (int64_t i = 0; OB_SUCC(ret) && i < column_exprs_.count(); ++i) {
     ObColumnRefRawExpr *value_col = column_exprs_.at(i);
     if (OB_FAIL(mark_expr_produced(value_col, branch_id_, id_, ctx))) {
-    } else if (!is_plan_root() && OB_FAIL(output_exprs_.push_back(value_col))) {
+    } else if (!is_file_table && !is_plan_root() &&
+               OB_FAIL(output_exprs_.push_back(value_col))) {
     } else { /*do nothing*/ }
   }
   if (OB_FAIL(ret)) {
   } else if (OB_FAIL(ObLogicalOperator::allocate_expr_post(ctx))) {
+  } else if (is_file_table && OB_FAIL(compute_file_projection())) {
   } else if (get_output_exprs().empty() && OB_FAIL(allocate_dummy_output())) {
   } else if (OB_FAIL(mark_probably_local_exprs())) {
   } else { /*do nothing*/ }
+  return ret;
+}
+
+int ObLogValuesTableAccess::compute_file_projection()
+{
+  int ret = OB_SUCCESS;
+  common::ObSEArray<ObRawExpr *, 16> used_exprs;
+  file_projection_.reuse();
+  if (OB_ISNULL(table_def_) || OB_ISNULL(table_def_->file_table_def_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_UNLIKELY(table_def_->file_table_def_->schema_.columns_.count() !=
+                         column_exprs_.count())) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("file schema and logical columns differ", K(ret),
+             K(table_def_->file_table_def_->schema_.columns_.count()),
+             K(column_exprs_.count()));
+  } else if (OB_FAIL(append(used_exprs, output_exprs_))) {
+  } else if (OB_FAIL(ObRawExprUtils::extract_column_exprs(filter_exprs_, used_exprs))) {
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < column_exprs_.count(); ++i) {
+    const int8_t projected = ObOptimizerUtil::find_item(used_exprs, column_exprs_.at(i))
+                                 ? 1 : 0;
+    if (OB_FAIL(file_projection_.push_back(projected))) {
+    }
+  }
   return ret;
 }
 
@@ -160,7 +191,9 @@ int ObLogValuesTableAccess::get_plan_item_info(PlanText &plan_text,
                        name.length(),
                        plan_item.object_alias_,
                        plan_item.object_alias_len_);
-      BUF_PRINT_STR("VALUES TABLE", plan_item.object_type_, plan_item.object_type_len_); 
+      const char *object_type = OB_NOT_NULL(table_def_->file_table_def_)
+                                ? "FILE TABLE" : "VALUES TABLE";
+      BUF_PRINT_STR(object_type, plan_item.object_type_, plan_item.object_type_len_);
     }
   }
   return ret;

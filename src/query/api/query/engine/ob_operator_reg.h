@@ -321,7 +321,8 @@ REGISTER_OPERATOR(ObLogExprValues, PHY_EXPR_VALUES, ObExprValuesSpec, ObExprValu
 class ObLogValuesTableAccess;
 class ObValuesTableAccessSpec;
 class ObValuesTableAccessOp;
-REGISTER_OPERATOR(ObLogValuesTableAccess, PHY_VALUES_TABLE_ACCESS, ObValuesTableAccessSpec, ObValuesTableAccessOp, NOINPUT);
+REGISTER_OPERATOR(ObLogValuesTableAccess, PHY_VALUES_TABLE_ACCESS,
+                  ObValuesTableAccessSpec, ObValuesTableAccessOp, NOINPUT, VECTORIZED_OP);
 
 class ObLogDelete;
 class ObTableDeleteSpec;

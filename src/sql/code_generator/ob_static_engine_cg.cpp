@@ -1696,11 +1696,20 @@ int ObStaticEngineCG::generate_spec(ObLogValuesTableAccess &op,
     spec.access_type_ = table_def->access_type_;
     spec.start_param_idx_ = table_def->start_param_idx_;
     spec.end_param_idx_ = table_def->end_param_idx_;
+    spec.has_file_table_ = OB_NOT_NULL(table_def->file_table_def_);
     ObIAllocator &allocator = phy_plan_->get_allocator();
-    if (OB_FAIL(spec.column_exprs_.prepare_allocate(op.get_column_exprs().count()))) {
+    if (spec.has_file_table_ &&
+        OB_FAIL(spec.file_table_def_.deep_copy(allocator, *table_def->file_table_def_))) {
+    } else if (spec.has_file_table_ &&
+               OB_FAIL(spec.file_projection_.prepare_allocate(
+                   op.get_file_projection().count()))) {
+    } else if (OB_FAIL(spec.column_exprs_.prepare_allocate(op.get_column_exprs().count()))) {
     } else if (OB_FAIL(spec.value_exprs_.prepare_allocate(table_def->access_exprs_.count()))) {
     } else if (OB_FAIL(spec.obj_params_.prepare_allocate(table_def->access_objs_.count()))) {
     } else {
+      for (int64_t i = 0; i < op.get_file_projection().count(); ++i) {
+        spec.file_projection_.at(i) = op.get_file_projection().at(i);
+      }
       for (int64_t i = 0; OB_SUCC(ret) && i < op.get_column_exprs().count(); i++) {
         ObColumnRefRawExpr *col_expr = op.get_column_exprs().at(i);
         ObExpr *expr = NULL;
@@ -5486,6 +5495,18 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
       spec.cs_type_ = op.get_cs_type();
       spec.parallel_ = op.get_parallel();
       spec.is_overwrite_ = op.get_is_overwrite();
+      spec.has_header_ = op.get_has_header();
+      spec.is_copy_ = op.get_is_copy();
+      if (OB_FAIL(ob_write_string(alloc, op.get_null_str(), spec.null_str_))) {
+      }
+      if (OB_SUCC(ret) && OB_FAIL(spec.header_columns_.init(op.get_header_columns().count()))) {
+      }
+      for (int64_t i = 0; OB_SUCC(ret) && i < op.get_header_columns().count(); ++i) {
+        ObString name;
+        if (OB_FAIL(ob_write_string(alloc, op.get_header_columns().at(i), name))) {
+        } else if (OB_FAIL(spec.header_columns_.push_back(name))) {
+        }
+      }
       spec.plan_->need_drive_dml_query_ = true;
     }
   }

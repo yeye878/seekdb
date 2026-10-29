@@ -19,6 +19,7 @@
 #include "sql/engine/basic/ob_values_table_access_op.h"
 #include "sql/engine/ob_exec_context.h"
 #include "sql/engine/expr/ob_obj_cast_runtime.h"
+#include "sql/session/ob_sql_session_info.h"
 
 namespace oceanbase
 {
@@ -32,18 +33,27 @@ OB_SERIALIZE_MEMBER_INHERIT(ObValuesTableAccessSpec,
                             value_exprs_,
                             start_param_idx_,
                             end_param_idx_,
-                            obj_params_);
+                            obj_params_,
+                            file_projection_,
+                            has_file_table_,
+                            file_table_def_);
 
 ObValuesTableAccessOp::ObValuesTableAccessOp(ObExecContext &exec_ctx,
                                              const ObOpSpec &spec,
                                              ObOpInput *input)
   : ObOperator(exec_ctx, spec, input), datum_caster_(), cm_(CM_NONE),
-    row_idx_(0), row_cnt_(0) {}
+    row_idx_(0), row_cnt_(0), csv_scanner_(nullptr), json_scanner_(nullptr),
+    parquet_scanner_(nullptr), glob_paths_(), glob_index_(0), file_path_(),
+    file_row_arena_(common::ObModIds::OB_SQL_EXECUTOR), in_batch_(false) {}
 
 int ObValuesTableAccessOp::inner_open()
 {
   int ret = OB_SUCCESS;
   row_idx_ = 0;
+  if (MY_SPEC.has_file_table_) {
+    ret = open_file_scan();
+    return ret;
+  }
   const int32_t result_flag = 0;
   ObPhysicalPlanCtx *plan_ctx = GET_PHY_PLAN_CTX(ctx_);
   if (OB_ISNULL(plan_ctx) || OB_ISNULL(ctx_.get_sql_ctx())) {
@@ -84,6 +94,10 @@ int ObValuesTableAccessOp::inner_rescan()
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(ObOperator::inner_rescan())) {
+  } else if (MY_SPEC.has_file_table_) {
+    release_file_scanners();
+    if (OB_FAIL(open_file_scan())) {
+    }
   } else {
     row_idx_ = 0;
   }
@@ -93,7 +107,13 @@ int ObValuesTableAccessOp::inner_rescan()
 int ObValuesTableAccessOp::switch_iterator()
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(ObOperator::inner_switch_iterator())) {
+  const int switch_ret = ObOperator::inner_switch_iterator();
+  if (OB_SUCCESS != switch_ret && OB_ITER_END != switch_ret) {
+    ret = switch_ret;
+  } else if (MY_SPEC.has_file_table_) {
+    release_file_scanners();
+    if (OB_FAIL(open_file_scan())) {
+    }
   } else {
     row_idx_ = 0;
   }
@@ -103,6 +123,16 @@ int ObValuesTableAccessOp::switch_iterator()
 int ObValuesTableAccessOp::inner_get_next_row()
 {
   int ret = OB_SUCCESS;
+  if (MY_SPEC.has_file_table_) {
+    clear_evaluated_flag();
+    if (OB_FAIL(try_check_status())) {
+    } else if (OB_FAIL(get_next_file_row())) {
+      if (OB_ITER_END != ret) {
+        LOG_WARN("failed to scan file row", K(ret));
+      }
+    }
+    return ret;
+  }
   if (OB_FAIL(try_check_status())) {
   } else {
     do {
@@ -116,6 +146,42 @@ int ObValuesTableAccessOp::inner_get_next_row()
       break;
     } while (OB_SUCC(ret));
   }
+  return ret;
+}
+
+int ObValuesTableAccessOp::inner_get_next_batch(const int64_t max_row_cnt)
+{
+  int ret = OB_SUCCESS;
+  int64_t row_count = 0;
+  bool reached_end = false;
+  ObEvalCtx::BatchInfoScopeGuard guard(eval_ctx_);
+  guard.set_batch_size(max_row_cnt);
+  if (OB_FAIL(try_check_status())) {
+  } else {
+    if (MY_SPEC.has_file_table_) {
+      in_batch_ = true;
+    }
+    while (OB_SUCC(ret) && row_count < max_row_cnt) {
+      guard.set_batch_idx(row_count);
+      if (MY_SPEC.has_file_table_) {
+        ret = get_next_file_row();
+      } else {
+        clear_evaluated_flag();
+        ret = calc_next_row();
+      }
+      if (OB_FAIL(ret)) {
+        if (OB_ITER_END == ret) {
+          reached_end = true;
+          ret = OB_SUCCESS;
+        }
+        break;
+      }
+      ++row_count;
+    }
+  }
+  in_batch_ = false;
+  brs_.size_ = row_count;
+  brs_.end_ = reached_end;
   return ret;
 }
 
@@ -324,10 +390,269 @@ OB_INLINE int ObValuesTableAccessOp::calc_next_row()
   return ret;
 }
 
+int ObValuesTableAccessOp::open_file_scan()
+{
+  int ret = OB_SUCCESS;
+  bool enabled = false;
+  common::ObString secure_file_priv;
+  ObSQLSessionInfo *session = GET_MY_SESSION(ctx_);
+  const ObFileTableDef &def = MY_SPEC.file_table_def_;
+  file_row_arena_.reset();
+  row_idx_ = 0;
+  in_batch_ = false;
+  glob_index_ = 0;
+  if (OB_ISNULL(session)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(session->get_file_table_enabled(enabled))) {
+  } else if (!enabled) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED,
+                   "file table function is disabled, set enable_file_sql=ON first");
+  } else if (OB_FAIL(session->get_secure_file_priv(secure_file_priv))) {
+  } else if (OB_FAIL(ObSQLUtils::get_default_cast_mode(false, 0, session, cm_))) {
+  } else {
+    cm_ |= CM_COLUMN_CONVERT;
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_FILE_FORMAT_GLOB == def.format_) {
+    if (OB_FAIL(ob_file_sql_resolve_paths(ctx_.get_allocator(), def.path_,
+                                          secure_file_priv, glob_paths_))) {
+    }
+  } else {
+    common::ObSEArray<common::ObString, 4> paths;
+    if (OB_FAIL(ob_file_sql_resolve_paths(ctx_.get_allocator(), def.path_,
+                                          secure_file_priv, paths))) {
+    } else if (OB_UNLIKELY(1 != paths.count())) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "file function requires exactly one input file");
+    } else {
+      file_path_ = paths.at(0);
+    }
+    if (OB_FAIL(ret)) {
+    } else if (OB_FAIL(check_file_identity())) {
+    } else if (OB_FILE_FORMAT_CSV == def.format_) {
+      if (OB_ISNULL(csv_scanner_)) {
+        void *buf = ctx_.get_allocator().alloc(sizeof(ObFileCsvScanner));
+        if (OB_ISNULL(buf)) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          csv_scanner_ = new (buf) ObFileCsvScanner();
+        }
+      } else {
+        csv_scanner_->release();
+      }
+      if (OB_SUCC(ret) && OB_FAIL(csv_scanner_->init(ctx_.get_allocator(), file_path_,
+                                                     def.options_, def.schema_))) {
+      }
+    } else if (OB_FILE_FORMAT_JSON == def.format_) {
+      if (OB_ISNULL(json_scanner_)) {
+        void *buf = ctx_.get_allocator().alloc(sizeof(ObFileJsonScanner));
+        if (OB_ISNULL(buf)) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          json_scanner_ = new (buf) ObFileJsonScanner();
+        }
+      } else {
+        json_scanner_->release();
+      }
+      if (OB_SUCC(ret) && OB_FAIL(json_scanner_->init(ctx_.get_allocator(), file_path_,
+                                                      def.schema_))) {
+      }
+    } else if (OB_FILE_FORMAT_PARQUET == def.format_) {
+      if (OB_ISNULL(parquet_scanner_)) {
+        void *buf = ctx_.get_allocator().alloc(sizeof(ObFileParquetScanner));
+        if (OB_ISNULL(buf)) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          parquet_scanner_ = new (buf) ObFileParquetScanner();
+        }
+      } else {
+        parquet_scanner_->release();
+      }
+      if (OB_SUCC(ret) && OB_FAIL(parquet_scanner_->init(ctx_.get_allocator(), file_path_,
+                                                         def.schema_,
+                                                         &MY_SPEC.file_projection_))) {
+      }
+    } else {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("unexpected file format", K(ret), K(def.format_));
+    }
+  }
+  if (OB_FAIL(ret)) {
+    release_file_scanners();
+  }
+  return ret;
+}
+
+int ObValuesTableAccessOp::check_file_identity()
+{
+  int ret = OB_SUCCESS;
+  const ObFileTableDef &def = MY_SPEC.file_table_def_;
+  ObFileIdentity current;
+  if (OB_FILE_FORMAT_GLOB == def.format_) {
+  } else if (OB_UNLIKELY(!def.identity_.valid_)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("file table has no inferred file identity", K(ret), K(def.path_));
+  } else if (OB_FAIL(ob_file_sql_get_file_identity(file_path_, current))) {
+  } else if (!ob_file_sql_same_identity(def.identity_, current)) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_USER_ERROR(OB_INVALID_ARGUMENT, "input file changed after schema inference");
+    LOG_WARN("input file identity changed", K(ret), K(file_path_),
+             K(def.identity_.device_), K(current.device_), K(def.identity_.inode_),
+             K(current.inode_), K(def.identity_.size_), K(current.size_),
+             K(def.identity_.mtime_ns_), K(current.mtime_ns_));
+  }
+  return ret;
+}
+
+int ObValuesTableAccessOp::get_next_file_row()
+{
+  int ret = OB_SUCCESS;
+  common::ObSEArray<common::ObString, 24> fields;
+  common::ObSEArray<bool, 24> is_null;
+  const ObFileFormat format = MY_SPEC.file_table_def_.format_;
+  if (OB_FILE_FORMAT_GLOB == format) {
+    if (glob_index_ >= glob_paths_.count()) {
+      ret = OB_ITER_END;
+    } else if (OB_FAIL(fields.push_back(glob_paths_.at(glob_index_++)))) {
+    } else if (OB_FAIL(is_null.push_back(false))) {
+    }
+  } else if (OB_FILE_FORMAT_CSV == format) {
+    if (OB_ISNULL(csv_scanner_)) {
+      ret = OB_NOT_INIT;
+    } else if (OB_FAIL(csv_scanner_->next_row(fields, is_null))) {
+    }
+  } else if (OB_FILE_FORMAT_JSON == format) {
+    if (OB_ISNULL(json_scanner_)) {
+      ret = OB_NOT_INIT;
+    } else if (OB_FAIL(json_scanner_->next_row(fields, is_null))) {
+    }
+  } else if (OB_FILE_FORMAT_PARQUET == format) {
+    if (OB_ISNULL(parquet_scanner_)) {
+      ret = OB_NOT_INIT;
+    } else if (OB_FAIL(parquet_scanner_->next_row(fields, is_null))) {
+    }
+  } else {
+    ret = OB_ERR_UNEXPECTED;
+  }
+  if (OB_SUCC(ret) && 0 == fields.count() && 0 == is_null.count() &&
+      0 < MY_SPEC.file_table_def_.schema_.columns_.count()) {
+    ret = OB_ITER_END;
+  }
+  if (OB_FAIL(ret)) {
+    if (OB_ITER_END == ret) {
+      if (OB_FILE_FORMAT_GLOB != format) {
+        const int identity_ret = check_file_identity();
+        if (OB_SUCCESS != identity_ret) {
+          ret = identity_ret;
+          LOG_WARN("failed to verify file identity at EOF", K(ret), K(row_idx_), K(file_path_));
+        }
+      }
+    } else {
+      LOG_WARN("failed to read file row", K(ret), K(row_idx_), K(format), K(file_path_));
+    }
+  } else {
+    // Keep the previous batch's evaluated state intact when the next read reaches EOF.
+    clear_evaluated_flag();
+    file_row_arena_.reset();
+    if (OB_FAIL(emit_file_row(fields, is_null))) {
+    } else {
+      ++row_idx_;
+    }
+  }
+  return ret;
+}
+
+int ObValuesTableAccessOp::emit_file_row(const common::ObIArray<common::ObString> &fields,
+                                         const common::ObIArray<bool> &is_null)
+{
+  int ret = OB_SUCCESS;
+  const ObFileSchema &schema = MY_SPEC.file_table_def_.schema_;
+  const int64_t column_cnt = MY_SPEC.column_exprs_.count();
+  if (OB_UNLIKELY(fields.count() != column_cnt || is_null.count() != column_cnt ||
+                  schema.columns_.count() != column_cnt)) {
+    ret = OB_INVALID_DATA;
+    LOG_WARN("file schema and physical columns differ", K(ret), K(fields.count()),
+             K(is_null.count()), K(column_cnt), K(schema.columns_.count()));
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < column_cnt; ++i) {
+    ObObjParam obj;
+    ObExpr *expr = MY_SPEC.column_exprs_.at(i);
+    if (OB_ISNULL(expr)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (is_null.at(i)) {
+      obj.set_null();
+    } else if (OB_FAIL(ob_file_sql_cell_to_obj(file_row_arena_, fields.at(i),
+                                               schema.columns_.at(i).type_,
+                                               GET_MY_SESSION(ctx_)->get_timezone_info(),
+                                               expr->obj_meta_.get_collation_type(), obj))) {
+    }
+    if (OB_SUCC(ret)) {
+      obj.set_param_meta();
+      if (OB_FAIL(calc_datum_from_param(obj, expr))) {
+      } else if (in_batch_ && !obj.is_null() && ob_is_string_type(obj.get_type())) {
+        if (OB_FAIL(expr->deep_copy_self_datum(eval_ctx_))) {
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+void ObValuesTableAccessOp::release_file_scanners()
+{
+  if (OB_NOT_NULL(csv_scanner_)) {
+    csv_scanner_->release();
+  }
+  if (OB_NOT_NULL(json_scanner_)) {
+    json_scanner_->release();
+  }
+  if (OB_NOT_NULL(parquet_scanner_)) {
+    parquet_scanner_->release();
+  }
+  glob_paths_.reuse();
+  glob_index_ = 0;
+  file_path_.reset();
+  file_row_arena_.reset();
+}
+
+void ObValuesTableAccessOp::destroy_file_scanners()
+{
+  if (OB_NOT_NULL(csv_scanner_)) {
+    csv_scanner_->~ObFileCsvScanner();
+    csv_scanner_ = nullptr;
+  }
+  if (OB_NOT_NULL(json_scanner_)) {
+    json_scanner_->~ObFileJsonScanner();
+    json_scanner_ = nullptr;
+  }
+  if (OB_NOT_NULL(parquet_scanner_)) {
+    parquet_scanner_->~ObFileParquetScanner();
+    parquet_scanner_ = nullptr;
+  }
+  glob_paths_.reset();
+  glob_index_ = 0;
+  file_path_.reset();
+  file_row_arena_.reset();
+}
+
+void ObValuesTableAccessOp::destroy()
+{
+  destroy_file_scanners();
+  ObOperator::destroy();
+}
+
 int ObValuesTableAccessOp::inner_close()
 {
   int ret = OB_SUCCESS;
   row_idx_ = 0;
+  if (MY_SPEC.has_file_table_) {
+    if (OB_FILE_FORMAT_GLOB != MY_SPEC.file_table_def_.format_) {
+      ret = check_file_identity();
+    }
+    release_file_scanners();
+    return ret;
+  }
   if (OB_FAIL(datum_caster_.destroy())) {
   }
   return ret;

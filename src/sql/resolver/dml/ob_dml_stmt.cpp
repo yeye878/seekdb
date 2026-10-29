@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "ob_dml_stmt.h"
+#include "sql/engine/basic/ob_file_scan_utils.h"
 #include "sql/rewrite/ob_transform_utils.h"
 #include "sql/optimizer/ob_logical_operator.h"
 using namespace oceanbase::sql;
@@ -4495,6 +4496,16 @@ int ObValuesTableDef::deep_copy(const ObValuesTableDef &other,
       ObRawExprResType tmp_type;
       if (OB_FAIL(tmp_type.assign(other.column_types_.at(i)))) {
       } else if (OB_FAIL(column_types_.push_back(tmp_type))) {
+      }
+    }
+    if (OB_SUCC(ret) && OB_NOT_NULL(other.file_table_def_)) {
+      void *buf = allocator->alloc(sizeof(ObFileTableDef));
+      if (OB_ISNULL(buf)) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        file_table_def_ = new (buf) ObFileTableDef();
+        if (OB_FAIL(file_table_def_->deep_copy(*allocator, *other.file_table_def_))) {
+        }
       }
     }
   }

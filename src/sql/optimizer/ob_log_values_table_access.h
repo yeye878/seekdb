@@ -31,7 +31,8 @@ class ObLogValuesTableAccess : public ObLogicalOperator
           table_def_(NULL),
           table_name_(),
           table_id_(common::OB_INVALID_ID),
-          values_path_(NULL)
+          values_path_(NULL),
+          file_projection_()
     {}
     virtual ~ObLogValuesTableAccess() {}
     virtual int est_cost() override;
@@ -45,6 +46,7 @@ class ObLogValuesTableAccess : public ObLogicalOperator
     virtual int get_plan_item_info(PlanText &plan_text, ObSqlPlanItem &plan_item) override;
     int mark_probably_local_exprs();
     int allocate_dummy_output();
+    int compute_file_projection();
     
     const common::ObIArray<ObColumnRefRawExpr *> &get_column_exprs() const { return column_exprs_; }
     common::ObIArray<ObColumnRefRawExpr *> &get_column_exprs() { return column_exprs_; }
@@ -57,6 +59,7 @@ class ObLogValuesTableAccess : public ObLogicalOperator
     inline void set_table_id(const uint64_t table_id) { table_id_ = table_id; }
     inline void set_values_path(ValuesTablePath *values_path) { values_path_ = values_path; }
     inline const ValuesTablePath *get_values_path() { return values_path_; }
+    const common::ObIArray<int8_t> &get_file_projection() const { return file_projection_; }
   private:
 
   private:
@@ -65,6 +68,7 @@ class ObLogValuesTableAccess : public ObLogicalOperator
     common::ObString table_name_;
     uint64_t table_id_;
     ValuesTablePath *values_path_;
+    common::ObSEArray<int8_t, 16, common::ModulePageAllocator, true> file_projection_;
     DISALLOW_COPY_AND_ASSIGN(ObLogValuesTableAccess);
   };
 }

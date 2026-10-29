@@ -19,6 +19,7 @@
 
 #include "sql/engine/ob_operator.h"
 #include "sql/engine/expr/ob_datum_cast.h"
+#include "sql/engine/basic/ob_file_scan_utils.h"
 
 namespace oceanbase
 {
@@ -32,7 +33,8 @@ class ObValuesTableAccessSpec : public ObOpSpec
 public:
   ObValuesTableAccessSpec(common::ObIAllocator &alloc, const ObPhyOperatorType type)
     : ObOpSpec(alloc, type), access_type_(ObValuesTableDef::ACCESS_EXPR), column_exprs_(alloc),
-      value_exprs_(alloc), start_param_idx_(-1), end_param_idx_(-1), obj_params_(alloc) {}
+      value_exprs_(alloc), start_param_idx_(-1), end_param_idx_(-1), obj_params_(alloc),
+      file_projection_(alloc), has_file_table_(false), file_table_def_() {}
   INHERIT_TO_STRING_KV("op_spec", ObOpSpec, K_(access_type));
   ObValuesTableDef::TableAccessType access_type_;
   common::ObFixedArray<ObExpr *, common::ObIAllocator> column_exprs_;
@@ -40,6 +42,9 @@ public:
   int64_t start_param_idx_;
   int64_t end_param_idx_;
   common::ObFixedArray<ObObj, common::ObIAllocator> obj_params_;
+  common::ObFixedArray<int8_t, common::ObIAllocator> file_projection_;
+  bool has_file_table_;
+  ObFileTableDef file_table_def_;
 private:
   DISALLOW_COPY_AND_ASSIGN(ObValuesTableAccessSpec);
 };
@@ -52,9 +57,17 @@ public:
   virtual int inner_rescan() override;
   virtual int switch_iterator() override;
   virtual int inner_get_next_row() override;
+  virtual int inner_get_next_batch(const int64_t max_row_cnt) override;
   virtual int inner_close() override;
-  virtual void destroy() override { ObOperator::destroy(); }
+  virtual void destroy() override;
 private:
+  int open_file_scan();
+  int check_file_identity();
+  int get_next_file_row();
+  int emit_file_row(const common::ObIArray<common::ObString> &fields,
+                    const common::ObIArray<bool> &is_null);
+  void release_file_scanners();
+  void destroy_file_scanners();
   int calc_next_row();
   int calc_datum_from_expr(const int64_t col_idx,
                            const int64_t row_idx,
@@ -76,6 +89,14 @@ private:
   common::ObCastMode cm_;
   int64_t row_idx_;
   int64_t row_cnt_;
+  ObFileCsvScanner *csv_scanner_;
+  ObFileJsonScanner *json_scanner_;
+  ObFileParquetScanner *parquet_scanner_;
+  common::ObSEArray<common::ObString, 16> glob_paths_;
+  int64_t glob_index_;
+  common::ObString file_path_;
+  common::ObArenaAllocator file_row_arena_;
+  bool in_batch_;
 };
 
 } // end namespace sql
