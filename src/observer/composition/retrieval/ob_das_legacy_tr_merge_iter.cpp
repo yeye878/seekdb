@@ -712,7 +712,12 @@ int ObDASLegacyTRMergeIter::do_table_scan()
     } else if (OB_UNLIKELY(!check_rangekey_inited_)) {
       ret = OB_ERR_UNEXPECTED;
     }
+    const int64_t dim_iter_cnt = taat_mode_ ? 1 : query_tokens_.count();
+    const bool has_agg = ir_ctdef_->need_inv_idx_agg();
     for (int64_t i = 0; OB_SUCC(ret) && i < children_cnt_; ++i) {
+      if (has_agg && i >= dim_iter_cnt && i < 2 * dim_iter_cnt) {
+        continue; // skip unused inv_idx_agg_iter_ children
+      }
       if (OB_FAIL(children_[i]->do_table_scan())) {
       }
     }
@@ -758,7 +763,12 @@ int ObDASLegacyTRMergeIter::inner_reuse()
       if (OB_FAIL(reuse_das_iter_scan_param(inv_idx_tablet_id_, *block_max_scan_params_[i]))) {
       }
     }
+    const int64_t dim_iter_cnt = taat_mode_ ? 1 : query_tokens_.count();
+    const bool has_agg = ir_ctdef_->need_inv_idx_agg();
     for (int64_t i = 0; OB_SUCC(ret) && i < children_cnt_; ++i) {
+      if (has_agg && i >= dim_iter_cnt && i < 2 * dim_iter_cnt) {
+        continue; // skip unused inv_idx_agg_iter_ children
+      }
       if (OB_FAIL(children_[i]->reuse())) {
       }
     }
@@ -787,7 +797,12 @@ int ObDASLegacyTRMergeIter::rescan()
   } else if (OB_UNLIKELY(!check_rangekey_inited_)) {
     ret = OB_ERR_UNEXPECTED;
   } else {
+    const int64_t dim_iter_cnt = taat_mode_ ? 1 : query_tokens_.count();
+    const bool has_agg = ir_ctdef_->need_inv_idx_agg();
     for (int64_t i = 0; OB_SUCC(ret) && i < children_cnt_; ++i) {
+      if (has_agg && i >= dim_iter_cnt && i < 2 * dim_iter_cnt) {
+        continue; // skip unused inv_idx_agg_iter_ children
+      }
       // TODO: update scan param
       if (OB_FAIL(children_[i]->rescan())) {
       }

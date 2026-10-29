@@ -179,7 +179,7 @@ int ObTransformPreProcess::transform_one_stmt(common::ObIArray<ObParentDMLStmt> 
     }
     if (OB_SUCC(ret)) {
       if (stmt->get_match_exprs().count() > 0 &&
-          OB_FAIL(preserve_order_for_fulltext_search(stmt, is_happened))) {
+          OB_FAIL(preserve_order_for_fulltext_search(parent_stmts, stmt, is_happened))) {
       } else {
         trans_happened |= is_happened;
       }
@@ -3790,7 +3790,10 @@ int ObTransformPreProcess::do_flatten_conditions(ObDMLStmt *stmt, ObIArray<ObRaw
 
 // full-text index queries on a single base table are processed with order preservation. 
 // (Order is not preserved in multi-table join scenarios.)
-int ObTransformPreProcess::preserve_order_for_fulltext_search(ObDMLStmt *stmt, bool& trans_happened)
+int ObTransformPreProcess::preserve_order_for_fulltext_search(
+    const common::ObIArray<ObParentDMLStmt> &parent_stmts,
+    ObDMLStmt *stmt,
+    bool& trans_happened)
 {
   int ret = OB_SUCCESS;
   trans_happened = false;
@@ -3798,6 +3801,38 @@ int ObTransformPreProcess::preserve_order_for_fulltext_search(ObDMLStmt *stmt, b
   ObRawExpr *match_expr = nullptr;
   if (OB_ISNULL(stmt)) {
     ret = OB_ERR_UNEXPECTED;
+  } else if (!parent_stmts.empty()) {
+    const ObDMLStmt *parent_stmt = parent_stmts.at(parent_stmts.count() - 1).stmt_;
+    if (OB_NOT_NULL(parent_stmt) && parent_stmt->is_select_stmt()) {
+      const ObSelectStmt *parent_select = static_cast<const ObSelectStmt*>(parent_stmt);
+      const TableItem *ti = nullptr;
+      for (int64_t i = 0; i < parent_select->get_table_size(); ++i) {
+        const TableItem *t = parent_select->get_table_item(i);
+        if (OB_NOT_NULL(t) && t->is_generated_table() && t->ref_query_ == stmt) {
+          ti = t;
+          break;
+        }
+      }
+      if (OB_NOT_NULL(ti) && parent_select->is_scala_group_by()
+          && !parent_select->has_order_by() && !parent_select->has_window_function()) {
+        bool all_count_aggr = true;
+        for (int64_t i = 0; all_count_aggr && i < parent_select->get_aggr_item_size(); ++i) {
+          const ObAggFunRawExpr *agg_expr = parent_select->get_aggr_item(i);
+          if (OB_ISNULL(agg_expr) || agg_expr->get_expr_type() != T_FUN_COUNT || agg_expr->is_param_distinct()) {
+            all_count_aggr = false;
+          }
+        }
+        if (all_count_aggr) {
+          // Parent statement only performs scalar COUNT aggregation on this subquery.
+          // The count of rows is min(N, limit), which does not depend on row ordering.
+          // Skip injecting artificial ORDER BY MATCH DESC to avoid full table scanning & sorting.
+          return OB_SUCCESS;
+        }
+      }
+    }
+  }
+
+  if (OB_FAIL(ret)) {
   } else if (stmt->get_table_items().count() != 1 || stmt->get_order_item_size() != 0) {
     // do nothing
   } else if (stmt->is_select_stmt() && 

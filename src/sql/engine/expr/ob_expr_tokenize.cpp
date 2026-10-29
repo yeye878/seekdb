@@ -69,17 +69,36 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
   // check param num, which is checked in ObExprOperator::calc_result_typeN.
   if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(parse_param(expr, ctx, temp_allocator, param))) {
+  } else if (OB_FAIL(parse_fulltext(expr, ctx, param))) {
+  } else if (OB_FAIL(parse_parser_name(expr, ctx, param))) {
   } else if (param.cacheable_
+             && expr.arg_cnt_ < 3
              && OB_NOT_NULL(session = ctx.exec_ctx_.get_my_session())
-             && OB_NOT_NULL(cache = session->get_fts_tokenize_cache(true))) {
-    cache_hit = cache->get(param.fulltext_,
+             && OB_NOT_NULL(cache = session->get_fts_tokenize_cache(true))
+             && cache->get(param.fulltext_,
                            param.parser_name_,
-                           param.properties_,
+                           ObString::make_empty_string(),
                            param.meta_.get_collation_type(),
                            param.output_mode_,
                            temp_allocator,
-                           cached_result);
+                           cached_result)) {
+    cache_hit = true;
+  } else {
+    MultimodeAlloctor mm_alloc(temp_allocator);
+    if (OB_FAIL(parse_parser_properties(expr, ctx, mm_alloc, param))) {
+    } else if (OB_FAIL(param.reform_parser_properties(param.properties_))) {
+    } else if (OB_FAIL(param.try_load_dictionary_for_ik())) {
+    } else if (param.cacheable_
+               && OB_NOT_NULL(session = ctx.exec_ctx_.get_my_session())
+               && OB_NOT_NULL(cache = session->get_fts_tokenize_cache(true))) {
+      cache_hit = cache->get(param.fulltext_,
+                             param.parser_name_,
+                             param.properties_,
+                             param.meta_.get_collation_type(),
+                             param.output_mode_,
+                             temp_allocator,
+                             cached_result);
+    }
   }
 
   if (OB_FAIL(ret)) {
@@ -96,12 +115,12 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
     } else {
       int tmp_ret = cache->put(param.fulltext_,
                                param.parser_name_,
-                               param.properties_,
+                               expr.arg_cnt_ < 3 ? ObString::make_empty_string() : param.properties_,
                                param.meta_.get_collation_type(),
                                param.output_mode_,
                                raw_result);
       if (OB_FAIL(tmp_ret)) {
-        LOG_WARN("failed to put BENG tokenize result into session cache", K(tmp_ret));
+        LOG_WARN("failed to put tokenize result into session cache", K(tmp_ret));
       }
     }
   } else if (OB_FAIL(ObJsonExprHelper::pack_json_res(expr,
@@ -371,7 +390,8 @@ int ObExprTokenize::parse_parser_name(const ObExpr &expr, ObEvalCtx &ctx, Tokeni
     }
   }
 
-  param.cacheable_ = 0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_BENG);
+  param.cacheable_ = (0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_BENG))
+                  || (0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_IK));
 
   if (OB_FAIL(ret)) {
     // already logged

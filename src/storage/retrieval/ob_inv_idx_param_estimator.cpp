@@ -20,6 +20,8 @@
 #include "query/engine/expr/ob_expr_util.h"
 #include "query/das/ob_das_iter_access.h"
 #include "share/rc/ob_server_runtime.h"
+#include "lib/lock/ob_spin_lock.h"
+#include "data_plane/access/ob_table_scan_param.h"
 #include "ob_block_stat_iter.h"
 #include "ob_inv_idx_param_estimator.h"
 
@@ -28,6 +30,17 @@ namespace oceanbase
 namespace storage
 {
 
+namespace {
+struct TabletAvgDocLenCacheEntry {
+  uint64_t tablet_id_;
+  int64_t total_doc_cnt_;
+  double avg_doc_len_;
+};
+static constexpr int64_t AVG_DOC_LEN_CACHE_SIZE = 16;
+static TabletAvgDocLenCacheEntry g_avg_doc_len_cache[AVG_DOC_LEN_CACHE_SIZE] = {};
+static common::ObSpinLock g_avg_doc_len_cache_lock;
+} // namespace
+
 int ObTextAvgDocLenEstimator::estimate_avg_doc_len(
     sql::ObExpr &avg_doc_token_cnt_expr,
     sql::ObEvalCtx &eval_ctx,
@@ -35,6 +48,22 @@ int ObTextAvgDocLenEstimator::estimate_avg_doc_len(
 {
   int ret = OB_SUCCESS;
   result = 0.0;
+  const ObTableScanParam *scan_param = doc_length_est_param_.get_scan_param();
+  const uint64_t tablet_id = (scan_param != nullptr) ? scan_param->tablet_id_.id() : 0;
+  if (tablet_id != 0 && total_doc_cnt_ > 0) {
+    const int64_t idx = tablet_id % AVG_DOC_LEN_CACHE_SIZE;
+    {
+      common::ObSpinLockGuard guard(g_avg_doc_len_cache_lock);
+      if (g_avg_doc_len_cache[idx].tablet_id_ == tablet_id &&
+          g_avg_doc_len_cache[idx].total_doc_cnt_ == total_doc_cnt_ &&
+          g_avg_doc_len_cache[idx].avg_doc_len_ > 0.0) {
+        result = g_avg_doc_len_cache[idx].avg_doc_len_;
+        avg_doc_token_cnt_expr.locate_datum_for_write(eval_ctx).set_double(result);
+        return OB_SUCCESS;
+      }
+    }
+  }
+
   ObBlockStatIterator stat_iter;
   ObStorageDatum tmp_result;
   number::ObNumber zero_num;
@@ -90,6 +119,13 @@ int ObTextAvgDocLenEstimator::estimate_avg_doc_len(
       const double default_avg_doc_token_cnt = sql::ObExprBM25::DEFAULT_AVG_DOC_TOKEN_CNT;
       result = avg_doc_token_cnt > default_avg_doc_token_cnt ? avg_doc_token_cnt : default_avg_doc_token_cnt;
       avg_doc_token_cnt_expr.locate_datum_for_write(eval_ctx).set_double(result);
+      if (tablet_id != 0 && total_doc_cnt_ > 0) {
+        const int64_t idx = tablet_id % AVG_DOC_LEN_CACHE_SIZE;
+        common::ObSpinLockGuard guard(g_avg_doc_len_cache_lock);
+        g_avg_doc_len_cache[idx].tablet_id_ = tablet_id;
+        g_avg_doc_len_cache[idx].total_doc_cnt_ = total_doc_cnt_;
+        g_avg_doc_len_cache[idx].avg_doc_len_ = result;
+      }
     }
   }
 
