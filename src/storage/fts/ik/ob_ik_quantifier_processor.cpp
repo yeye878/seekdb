@@ -29,6 +29,12 @@ namespace oceanbase
 {
 namespace storage
 {
+void ObIKQuantifierProcessor::reset_state()
+{
+  reset();
+  count_hits_.reset();
+}
+
 int ObIKQuantifierProcessor::do_process(TokenizeContext &ctx,
                                         const char *ch,
                                         const uint8_t char_len,

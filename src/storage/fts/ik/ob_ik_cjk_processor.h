@@ -36,6 +36,8 @@ public:
   ~ObIKCJKProcessor() override { hits_.reset(); }
 
 public:
+  void reset_state() override;
+
   int do_process(TokenizeContext &ctx,
                  const char *ch,
                  const uint8_t char_len,

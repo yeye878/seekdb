@@ -52,18 +52,33 @@ TokenizeContext::TokenizeContext(ObCollationType coll_type,
                                  int64_t fulltext_len,
                                  bool is_smart)
     : coll_type_(coll_type), fulltext_(fulltext), fulltext_len_(fulltext_len), cursor_(0),
-      next_char_len_(0), handle_size_(0), is_smart_(is_smart), token_list_(allocator),
-      result_list_(allocator)
+      next_char_len_(0), next_char_type_(ObFTCharUtil::CharType::USELESS), handle_size_(0),
+      is_smart_(is_smart), token_list_(allocator), result_list_(allocator)
 {
 }
 
 int TokenizeContext::init()
 {
-  int ret = OB_SUCCESS;
+  return reopen(fulltext_, fulltext_len_, is_smart_);
+}
 
-  if (OB_ISNULL(fulltext_) || fulltext_len_ <= 0) {
+int TokenizeContext::reopen(const char *fulltext, int64_t fulltext_len, bool is_smart)
+{
+  int ret = OB_SUCCESS;
+  if (OB_ISNULL(fulltext) || fulltext_len <= 0) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(prepare_next_char())) {
+  } else {
+    token_list_.reset();
+    result_list_.reset();
+    fulltext_ = fulltext;
+    fulltext_len_ = fulltext_len;
+    cursor_ = 0;
+    next_char_len_ = 0;
+    next_char_type_ = ObFTCharUtil::CharType::USELESS;
+    handle_size_ = 0;
+    is_smart_ = is_smart;
+    if (OB_FAIL(prepare_next_char())) {
+    }
   }
   return ret;
 }

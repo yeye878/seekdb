@@ -18,6 +18,7 @@
 #define _OCEANBASE_STORAGE_FTS_OB_IK_FT_PARSER_H_
 
 #include "lib/allocator/ob_allocator.h"
+#include "lib/allocator/page_arena.h"
 #include "storage/fts/dict/ob_ft_cache_container.h"
 #include "storage/fts/dict/ob_ft_dict.h"
 #include "storage/fts/dict/ob_ft_dict_def.h"
@@ -40,6 +41,7 @@ public:
         coll_type_(ObCollationType::CS_TYPE_INVALID),
         ctx_(nullptr),
         hub_(hub),
+        parse_allocator_(lib::ObMemAttr("IKParse")),
         segmenters_(allocator_),
         cache_main_(allocator),
         cache_quan_(allocator),
@@ -58,6 +60,8 @@ public:
                      int64_t &word_len,
                      int64_t &char_cnt,
                      int64_t &word_freq) override;
+  int reopen(ObFTParserParam *param) override;
+  bool is_reusable() const override { return true; }
 
   VIRTUAL_TO_STRING_KV(K(is_inited_));
 
@@ -96,6 +100,7 @@ private:
   ObCollationType coll_type_;
   TokenizeContext *ctx_;
   ObFTDictHub *hub_;
+  ObArenaAllocator parse_allocator_;
   ObList<ObIIKProcessor *, ObIAllocator> segmenters_;
 
   // For now there's no change of dict in one query, so we can pin dict this level.

@@ -39,6 +39,7 @@ public:
   ~TokenizeContext();
 
   int init();
+  int reopen(const char *fulltext, int64_t fulltext_len, bool is_smart);
   int reset_resource();
 
   int get_next_token(const char *&word, int64_t &word_len, int64_t &offset, int64_t &char_cnt);
@@ -102,6 +103,8 @@ public:
   virtual ~ObIIKProcessor() {}
 
   int process(TokenizeContext &ctx);
+
+  virtual void reset_state() = 0;
 
   virtual int do_process(TokenizeContext &ctx,
                          const char *ch,

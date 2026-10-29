@@ -161,6 +161,11 @@ public:
       common::ObIAllocator *allocator,
       const common::ObString &parser_name,
       const common::ObString &parser_properties);
+  int init(
+      common::ObIAllocator *parser_allocator,
+      common::ObIAllocator *output_allocator,
+      const common::ObString &parser_name,
+      const common::ObString &parser_properties);
   /**
    * Split document into multiple words
    *
@@ -175,7 +180,7 @@ public:
       const char *fulltext,
       const int64_t fulltext_len,
       int64_t &doc_length,
-      ObFTWordMap &words) const;
+      ObFTWordMap &words);
   int check_is_the_same(
       const common::ObString &parser_name,
       const common::ObString &parser_properties,
@@ -204,22 +209,18 @@ public:
 
   void reset();
 
-  TO_STRING_KV(KP_(allocator), K_(parser_name), KP_(parser_desc), K_(is_inited));
+  TO_STRING_KV(KP_(allocator), KP_(parser_allocator), K_(parser_name), KP_(parser_desc), KP_(token_iter), K_(is_inited));
 
 private:
-  static int segment(
-      const ObFTParserProperty &property,
-      const int64_t parser_version,
-      const ObIFTParserDesc *parser_desc,
-      const ObCharsetInfo *cs,
-      const char *fulltext,
-      const int64_t fulltext_len,
-      common::ObIAllocator &allocator,
-      ObAddWord &add_word);
+  int segment(const ObFTParserParam &param, ObAddWord &add_word);
+  void free_token_iter();
   int set_add_word_flag(const ObIFTParserDesc &ftparser_desc);
 private:
   common::ObIAllocator *allocator_;
+  common::ObIAllocator *parser_allocator_;
   const ObIFTParserDesc *parser_desc_;
+  ObITokenIterator *token_iter_;
+  ObFTParserParam token_iter_param_;
   ObFTParser parser_name_;
   ObAddWordFlag add_word_flag_;
   ObFTParserProperty parser_property_;

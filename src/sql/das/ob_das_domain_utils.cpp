@@ -44,7 +44,9 @@ ObExprOperatorType ObFTIndexRowCache::FTS_INDEX_EXPR_TYPE[] = {T_FUN_SYS_WORD_SE
 ObExprOperatorType ObFTIndexRowCache::FTS_DOC_WORD_EXPR_TYPE[] = {T_FUN_SYS_DOC_ID, T_FUN_SYS_WORD_SEGMENT, T_FUN_SYS_WORD_COUNT, T_FUN_SYS_DOC_LENGTH};
 
 ObFTIndexRowCache::ObFTIndexRowCache()
-  : rows_(),
+  : merge_memctx_(nullptr),
+    parser_memctx_(nullptr),
+    rows_(),
     row_idx_(0),
     is_fts_index_aux_(true),
     helper_(),
@@ -64,11 +66,17 @@ int ObFTIndexRowCache::init(
 {
   int ret = OB_SUCCESS;
   lib::ContextParam param;
+  lib::ContextParam parser_param;
   param.set_mem_attr("DocIdMerge", ObCtxIds::DEFAULT_CTX_ID).set_properties(lib::USE_TL_PAGE_OPTIONAL);
+  parser_param.set_mem_attr("FTParser", ObCtxIds::DEFAULT_CTX_ID).set_properties(lib::USE_TL_PAGE_OPTIONAL);
   if (OB_UNLIKELY(is_inited_)) {
     ret = OB_INIT_TWICE;
   } else if (OB_FAIL(CURRENT_CONTEXT->CREATE_CONTEXT(merge_memctx_, param))) {
-  } else if (OB_FAIL(helper_.init(&(merge_memctx_->get_arena_allocator()), parser_name, parser_properties))) {
+  } else if (OB_FAIL(CURRENT_CONTEXT->CREATE_CONTEXT(parser_memctx_, parser_param))) {
+  } else if (OB_FAIL(helper_.init(&(parser_memctx_->get_arena_allocator()),
+                                  &(merge_memctx_->get_arena_allocator()),
+                                  parser_name,
+                                  parser_properties))) {
   } else {
     row_idx_ = 0;
     is_fts_index_aux_ = is_fts_index_aux;
@@ -123,6 +131,10 @@ void ObFTIndexRowCache::reset()
   row_idx_ = 0;
   is_fts_index_aux_ = true;
   helper_.reset();
+  if (OB_NOT_NULL(parser_memctx_)) {
+    DESTROY_CONTEXT(parser_memctx_);
+    parser_memctx_ = nullptr;
+  }
   if (OB_NOT_NULL(merge_memctx_)) {
     DESTROY_CONTEXT(merge_memctx_);
     merge_memctx_ = nullptr;
@@ -844,6 +856,7 @@ void ObFTDMLIterator::reset()
   is_inited_ = false;
   data_plane::reset_ft_doc_word_iterator(ft_doc_word_iter_);
   ft_parse_helper_.reset();
+  ft_parse_allocator_.reset();
   ObDomainDMLIterator::reset();
 }
 
@@ -869,7 +882,7 @@ int ObFTDMLIterator::rewind()
         // This is the same as the parser name of the previous index.
         // nothing to do, just skip.
       } else if (FALSE_IT(ft_parse_helper_.reset())) {
-      } else if (OB_FAIL(ft_parse_helper_.init(&allocator_, parser_str, parser_property_str))) {
+      } else if (OB_FAIL(ft_parse_helper_.init(&ft_parse_allocator_, &allocator_, parser_str, parser_property_str))) {
       }
     } else if (ObDomainDMLMode::DOMAIN_DML_MODE_FT_SCAN == mode_) {
       if (OB_ISNULL(ft_doc_word_iter_)
@@ -905,7 +918,7 @@ int ObFTDMLIterator::init(
   } else {
     switch (mode_) {
       case ObDomainDMLMode::DOMAIN_DML_MODE_DEFAULT: {
-        if (OB_FAIL(ft_parse_helper_.init(&allocator_, parser_name, parser_properties))) {
+        if (OB_FAIL(ft_parse_helper_.init(&ft_parse_allocator_, &allocator_, parser_name, parser_properties))) {
         }
         break;
       }
@@ -962,7 +975,7 @@ int ObFTDMLIterator::change_domain_dml_mode(const ObDomainDMLMode &mode)
           // This is the same as the parser name of the previous index.
           // nothing to do, just skip.
         } else if (FALSE_IT(ft_parse_helper_.reset())) {
-        } else if (OB_FAIL(ft_parse_helper_.init(&allocator_, parser_str, parser_property_str))) {
+        } else if (OB_FAIL(ft_parse_helper_.init(&ft_parse_allocator_, &allocator_, parser_str, parser_property_str))) {
         }
         break;
       }
