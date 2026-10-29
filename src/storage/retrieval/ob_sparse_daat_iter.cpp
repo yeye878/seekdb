@@ -23,6 +23,23 @@ namespace oceanbase
 namespace storage
 {
 
+static int compare_binary_retrieval_ids(
+    const ObDatum &l, const ObDatum &r, int &cmp_ret,
+    const common::ObDatumAccessContext *access_ctx)
+{
+  UNUSED(access_ctx);
+  if (l.is_null() || r.is_null()) {
+    cmp_ret = l.is_null() ? (r.is_null() ? 0 : -1) : 1;
+  } else {
+    // CS_TYPE_BINARY compares every byte, including trailing spaces and NULs.
+    // The type/collation guard in init excludes text and other collations.
+    const int64_t len = MIN(l.len_, r.len_);
+    const int cmp = len > 0 ? MEMCMP(l.ptr_, r.ptr_, len) : 0;
+    cmp_ret = cmp > 0 ? 1 : (cmp < 0 ? -1 : (l.len_ > r.len_) - (l.len_ < r.len_));
+  }
+  return OB_SUCCESS;
+}
+
 ObSRMergeCmp::ObSRMergeCmp()
   : cmp_func_(nullptr),
     iter_ids_(nullptr),
@@ -41,6 +58,10 @@ int ObSRMergeCmp::init(
     iter_ids_ = iter_ids;
     common::ObDatumBasicFuncs *basic_funcs = ObDatumFuncs::get_basic_func(id_meta.type_, id_meta.cs_type_);
     cmp_func_ = basic_funcs->null_first_cmp_;
+    if (CS_TYPE_BINARY == id_meta.cs_type_
+        && (ObVarcharType == id_meta.type_ || ObCharType == id_meta.type_)) {
+      cmp_func_ = compare_binary_retrieval_ids;
+    }
     if (OB_ISNULL(cmp_func_)) {
       ret = OB_ERR_UNEXPECTED;
     } else {
@@ -82,7 +103,8 @@ ObSRDaaTIterImpl::ObSRDaaTIterImpl()
     buffered_relevances_(),
     next_round_iter_idxes_(),
     next_round_cnt_(0),
-    set_datum_func_(nullptr)
+    set_datum_func_(nullptr),
+    filter_is_relevance_bool_(false)
 {
 }
 
@@ -102,6 +124,12 @@ int ObSRDaaTIterImpl::init(
     iter_param_ = &iter_param;
     dim_iters_ = &dim_iters;
     relevance_collector_ = &relevance_collector;
+    const ObExpr *filter = iter_param_->filter_expr_;
+    const ObExpr *relevance = iter_param_->relevance_proj_expr_;
+    filter_is_relevance_bool_ = iter_param_->eval_ctx_->is_vectorized()
+        && nullptr != filter && T_OP_BOOL == filter->type_ && 1 == filter->arg_cnt_
+        && nullptr != relevance && filter->args_[0] == relevance
+        && ObDoubleType == relevance->datum_meta_.type_;
     const int64_t max_batch_size = OB_MAX(iter_param_->eval_ctx_->max_batch_size_, iter_param_->max_batch_size_);
     if (iter_param_->id_proj_expr_->datum_meta_.type_ == common::ObUInt64Type) {
       set_datum_func_ = ObISparseRetrievalMergeIter::set_datum_int;
@@ -156,6 +184,7 @@ void ObSRDaaTIterImpl::reset()
   buffered_relevances_.reset();
   next_round_iter_idxes_.reset();
   next_round_cnt_ = 0;
+  filter_is_relevance_bool_ = false;
   input_row_cnt_ = 0;
   output_row_cnt_ = 0;
   is_inited_ = false;
@@ -232,6 +261,16 @@ int ObSRDaaTIterImpl::get_next_rows(const int64_t capacity, int64_t &count)
   } else {
     count = 0;
     const int64_t real_capacity = MIN(capacity, iter_param_->max_batch_size_);
+    if (filter_is_relevance_bool_) {
+      // The fast filter below does not materialize the BOOL expression. Invalidate
+      // its previous batch so a shared consumer evaluates it from projected scores.
+      ObExpr *filter = iter_param_->filter_expr_;
+      if (filter->is_batch_result()) {
+        filter->get_evaluated_flags(*iter_param_->eval_ctx_).reset(iter_param_->eval_ctx_->max_batch_size_);
+      } else {
+        filter->get_eval_info(*iter_param_->eval_ctx_).clear_evaluated_flag();
+      }
+    }
     while (OB_SUCC(ret) && count < real_capacity) {
       if (OB_FAIL(do_one_merge_round(count))) {
         if (OB_UNLIKELY(OB_ITER_END != ret)) {
@@ -348,6 +387,15 @@ int ObSRDaaTIterImpl::process_collected_row(const ObDatum &id_datum, const doubl
 
 int ObSRDaaTIterImpl::filter_on_demand(const int64_t count, const double relevance, bool &need_project)
 {
+  if (filter_is_relevance_bool_) {
+    if (OB_UNLIKELY(count >= iter_param_->eval_ctx_->max_batch_size_)) {
+      return OB_ERR_UNEXPECTED;
+    }
+    // Same conversion as calc_bool_expr_for_double_type, including negative
+    // values and signed zero. Scores are still computed and projected normally.
+    need_project = (0.0 != relevance);
+    return OB_SUCCESS;
+  }
   int ret = OB_SUCCESS;
   ObExpr *filter_expr = iter_param_->filter_expr_;
   ObExpr *relevance_proj_expr = iter_param_->relevance_proj_expr_;

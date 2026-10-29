@@ -1,0 +1,26 @@
+[ RUN ] candidate relevance_bool_filter
+[ PASS ] candidate relevance_bool_filter
+[ RUN ] candidate ik_char_classification
+[ PASS ] candidate ik_char_classification
+[ RUN ] candidate cn_word
+[ PASS ] candidate cn_word
+[ RUN ] candidate tokenize_function
+[ PASS ] candidate tokenize_function
+[ RUN ] candidate simple_query
+[ PASS ] candidate simple_query
+[ RUN ] candidate domain_id_merge_with_compare_null
+[ PASS ] candidate domain_id_merge_with_compare_null
+LOG_DIR=/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/mysqltest_v2_candidate_2026-10-28_235431
+[ RUN ] baseline relevance_bool_filter
+[ PASS ] baseline relevance_bool_filter
+[ RUN ] baseline ik_char_classification
+[ PASS ] baseline ik_char_classification
+[ RUN ] baseline cn_word
+[ PASS ] baseline cn_word
+[ RUN ] baseline tokenize_function
+[ PASS ] baseline tokenize_function
+[ RUN ] baseline simple_query
+[ PASS ] baseline simple_query
+[ RUN ] baseline domain_id_merge_with_compare_null
+[ PASS ] baseline domain_id_merge_with_compare_null
+LOG_DIR=/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/mysqltest_v2_baseline_2026-10-28_235555

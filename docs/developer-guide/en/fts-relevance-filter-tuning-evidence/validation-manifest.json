@@ -1,0 +1,68 @@
+{
+  "order": [
+    "candidate",
+    "baseline",
+    "baseline",
+    "candidate"
+  ],
+  "cpu_affinity": [
+    0,
+    2
+  ],
+  "runs": [
+    {
+      "index": 1,
+      "variant": "candidate",
+      "server_log": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235402_v2_1_candidate_server.log",
+      "regression": "PASS (6 mysqltests)",
+      "benchmark_files": [
+        "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235440_bench_candidate_score.txt",
+        "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235440_bench_candidate.txt"
+      ],
+      "benchmark": "PASS"
+    },
+    {
+      "index": 2,
+      "variant": "baseline",
+      "server_log": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235402_v2_2_baseline_server.log",
+      "regression": "PASS (6 mysqltests)",
+      "benchmark_files": [
+        "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235603_bench_baseline.txt",
+        "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235603_bench_baseline_score.txt"
+      ],
+      "benchmark": "PASS"
+    },
+    {
+      "index": 3,
+      "variant": "baseline",
+      "server_log": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235402_v2_3_baseline_server.log",
+      "benchmark_files": [
+        "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235649_bench_baseline.txt",
+        "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235649_bench_baseline_score.txt"
+      ],
+      "benchmark": "PASS"
+    },
+    {
+      "index": 4,
+      "variant": "candidate",
+      "server_log": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235402_v2_4_candidate_server.log",
+      "benchmark_files": [
+        "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235743_bench_candidate_score.txt",
+        "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/logs/2026-10-28_235743_bench_candidate.txt"
+      ],
+      "benchmark": "PASS"
+    }
+  ],
+  "binaries": {
+    "baseline": {
+      "path": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/build_baseline/src/observer/seekdb",
+      "sha256": "0ddb5e05ede0a3e33e43d2e9d067a1c38f2ca5fce9f0e0009dfd5c92f7d8ffd6",
+      "size": 1333804016
+    },
+    "candidate": {
+      "path": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/build_candidate/src/observer/seekdb",
+      "sha256": "8dfb1992e3df684e986af489f8b7150e25498c610cefeff39bd78b43fbba57bd",
+      "size": 1333735208
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "candidate": {
+    "path": "/mnt/d/oceanbase/tasks/t12_fts_tuning/src/seekdb/src/storage/retrieval/ob_sparse_daat_iter.cpp",
+    "source_sha256": "d691e65aba9c093342ae43b3de054b751bee02a33f3e6074bd5d69cfccff0b95",
+    "extracted_sha256": "123bdeab8da1a8748a431c556f7d018fd9fd34490d7e503f92bc56565ce8d502"
+  },
+  "binary": {
+    "path": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/baseline_source/src/oblib/lib/charset/ob_ctype_bin.cc",
+    "source_sha256": "5db7f24bde50b315bc7abaaef297b0588d2e8d73b6a0de34ec2a9912725504b9",
+    "extracted_sha256": "617608d2649dd7ef9f92fa1b36df8ee8e652fcf8ffa3c2bd9d1eda538469194d"
+  },
+  "binary_sp": {
+    "path": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/baseline_source/src/oblib/lib/charset/ob_ctype_bin.cc",
+    "source_sha256": "5db7f24bde50b315bc7abaaef297b0588d2e8d73b6a0de34ec2a9912725504b9",
+    "extracted_sha256": "f0cd9e8ffd70f3439fbd37bae3ad8515daa26b3b5727346b99ae0ad92f50411d"
+  },
+  "str_impl": {
+    "path": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/baseline_source/src/share/datum/ob_datum_cmp_func_def.h",
+    "source_sha256": "7ca7270404bf8a9b103ec4d9d69af95f4802297cff9cd76ed4be0c775aeff875",
+    "extracted_sha256": "56ab5b0ee208286065ae6a08eecda0652aa3e897f4fca0f5d744421657c9b957"
+  },
+  "null_safe": {
+    "path": "/mnt/d/oceanbase/tasks/t12_fts_tuning/outputs/baseline_source/src/share/datum/ob_datum_funcs_impl.h",
+    "source_sha256": "9c3f50cf1a5a4657e83368366ae3780f8db43f35e585cdbcb75ba18f643afb22",
+    "extracted_sha256": "0c9dd8905e2ec336019f3d27e5b76e6a090798085dcc5c3aaf72964a4803e377"
+  }
+}

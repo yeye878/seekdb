@@ -1,0 +1,23 @@
+[ 36%] Built target ob_storage_simd
+[ 51%] Built target ob_share
+[ 51%] Building CXX object src/storage/CMakeFiles/ob_storage.dir/Unity/unity_ob_storage_ob_storage_retrieval_0_c___cxx.cxx.o
+[ 52%] Built target ob_main
+[ 53%] Built target ob_malloc_object
+[ 54%] Built target zstd_1_3_8
+[ 54%] Built target ob_share_static
+[ 55%] Built target ob_sql_server_parser_static
+[ 55%] Built target syspack_source
+[ 55%] Built target ob_malloc
+[ 56%] Built target compress
+[ 75%] Built target ob_sql
+[ 75%] Built target ob_sql_static
+[ 81%] Built target ob_server
+[ 86%] Built target oblib_lib
+[ 87%] Built target oblib
+[100%] Built target ob_storage
+[100%] Linking CXX static library libob_storage_static.a
+[100%] Built target ob_storage_static
+[100%] Built target oceanbase_static
+[100%] Linking CXX executable seekdb
+[100%] Built target seekdb
+BUILD_END=2026-10-28T23:53:52Z
