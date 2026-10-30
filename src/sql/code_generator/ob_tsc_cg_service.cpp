@@ -1906,6 +1906,44 @@ int ObTscCgService::generate_text_ir_ctdef(const ObLogTableScan &op,
         partition_row_cnt = est_cost_info->table_meta_info_->table_row_count_ / est_cost_info->table_meta_info_->part_count_;
       }
       ir_scan_ctdef->estimated_total_doc_cnt_ = partition_row_cnt;
+      if (!cg_ctx.is_func_lookup_
+          && !cg_ctx.is_es_match_
+          && !cg_ctx.is_merge_fts_index_
+          && NATURAL_LANGUAGE_MODE == tr_info.match_expr_->get_mode_flag()
+          && tr_info.match_expr_->get_columns_boosts().empty()
+          && !tr_info.need_sort()
+          && common::ObQueryFlag::Reverse != op.get_scan_order()
+          && op.get_lookup_tr_infos().empty()
+          && op.get_match_tr_infos().empty()
+          && op.get_merge_tr_infos().empty()
+          && nullptr != tr_info.pushdown_match_filter_
+          && T_OP_BOOL == tr_info.pushdown_match_filter_->get_expr_type()
+          && 1 == tr_info.pushdown_match_filter_->get_param_count()
+          && tr_info.pushdown_match_filter_->get_param_expr(0) == tr_info.match_expr_) {
+        auto expr_contains = [](auto &self, const ObRawExpr *root, const ObRawExpr *target) -> bool {
+          if (nullptr == root || nullptr == target) {
+            return false;
+          } else if (root == target) {
+            return true;
+          }
+          for (int64_t idx = 0; idx < root->get_param_count(); ++idx) {
+            if (self(self, root->get_param_expr(idx), target)) {
+              return true;
+            }
+          }
+          return false;
+        };
+        bool score_used_elsewhere = false;
+        for (int64_t idx = 0; !score_used_elsewhere && idx < op.get_output_exprs().count(); ++idx) {
+          score_used_elsewhere = expr_contains(expr_contains, op.get_output_exprs().at(idx), tr_info.match_expr_);
+        }
+        for (int64_t idx = 0; !score_used_elsewhere && idx < op.get_filter_exprs().count(); ++idx) {
+          score_used_elsewhere = expr_contains(expr_contains, op.get_filter_exprs().at(idx), tr_info.match_expr_);
+        }
+        if (!score_used_elsewhere) {
+          ir_scan_ctdef->is_boolean_filter_only_ = true;
+        }
+      }
       if (tr_info.match_expr_->get_columns_boosts().count() > 0) {
         if (tr_info.column_boost_idx_ < 0 || tr_info.column_boost_idx_ >= tr_info.match_expr_->get_columns_boosts().count()) {
           ret = OB_ERR_UNEXPECTED;

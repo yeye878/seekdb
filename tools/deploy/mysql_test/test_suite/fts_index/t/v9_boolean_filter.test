@@ -1,0 +1,40 @@
+--disable_query_log
+--disable_warnings
+DROP DATABASE IF EXISTS t12_v9_bool_regression;
+CREATE DATABASE t12_v9_bool_regression;
+USE t12_v9_bool_regression;
+SET NAMES utf8mb4;
+CREATE TABLE digit(n INT PRIMARY KEY);
+INSERT INTO digit VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9);
+CREATE TABLE docs(id INT PRIMARY KEY, body TEXT);
+INSERT INTO docs
+SELECT id, CASE MOD(id, 5)
+  WHEN 0 THEN 'common alpha'
+  WHEN 1 THEN 'common alpha beta'
+  WHEN 2 THEN 'common beta'
+  WHEN 3 THEN 'common gamma'
+  ELSE NULL END
+FROM (SELECT 1+a.n+10*b.n+100*c.n+1000*d.n AS id
+      FROM digit a, digit b, digit c, digit d) numbers
+WHERE id <= 1537;
+ALTER TABLE docs ADD FULLTEXT INDEX ft(body) WITH PARSER beng;
+CREATE TABLE ref_ids AS SELECT id FROM docs WHERE MATCH(body) AGAINST('alpha beta') != 0;
+CREATE TABLE fast_ids AS SELECT id FROM docs WHERE MATCH(body) AGAINST('alpha beta');
+SELECT (SELECT COUNT(*) FROM ref_ids r LEFT JOIN fast_ids f ON r.id=f.id WHERE f.id IS NULL)
+     + (SELECT COUNT(*) FROM fast_ids f LEFT JOIN ref_ids r ON r.id=f.id WHERE r.id IS NULL) AS mismatches;
+DROP TABLE ref_ids, fast_ids;
+CREATE TABLE ref_ids AS SELECT id FROM docs WHERE MATCH(body) AGAINST('common') != 0;
+CREATE TABLE fast_ids AS SELECT id FROM docs WHERE MATCH(body) AGAINST('common');
+SELECT (SELECT COUNT(*) FROM ref_ids r LEFT JOIN fast_ids f ON r.id=f.id WHERE f.id IS NULL)
+     + (SELECT COUNT(*) FROM fast_ids f LEFT JOIN ref_ids r ON r.id=f.id WHERE r.id IS NULL) AS mismatches;
+SELECT (SELECT GROUP_CONCAT(id ORDER BY id DESC) FROM (SELECT id FROM docs WHERE MATCH(body) AGAINST('common') ORDER BY id DESC LIMIT 12) a)
+     != (SELECT GROUP_CONCAT(id ORDER BY id DESC) FROM (SELECT id FROM docs WHERE MATCH(body) AGAINST('common') != 0 ORDER BY id DESC LIMIT 12) b) AS mismatches;
+DROP TABLE ref_ids, fast_ids;
+UPDATE docs SET body='unrelated' WHERE MOD(id, 11)=0;
+DELETE FROM docs WHERE MOD(id, 13)=0;
+CREATE TABLE ref_ids AS SELECT id FROM docs WHERE MATCH(body) AGAINST('alpha beta') != 0;
+CREATE TABLE fast_ids AS SELECT id FROM docs WHERE MATCH(body) AGAINST('alpha beta');
+SELECT (SELECT COUNT(*) FROM ref_ids r LEFT JOIN fast_ids f ON r.id=f.id WHERE f.id IS NULL)
+     + (SELECT COUNT(*) FROM fast_ids f LEFT JOIN ref_ids r ON r.id=f.id WHERE r.id IS NULL) AS mismatches;
+SELECT (SELECT COUNT(*) FROM docs WHERE MATCH(body) AGAINST('notpresent')) AS mismatches;
+DROP DATABASE t12_v9_bool_regression;

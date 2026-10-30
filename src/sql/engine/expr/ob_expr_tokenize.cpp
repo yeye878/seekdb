@@ -56,32 +56,67 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
 {
   int ret = OB_SUCCESS;
 
+  if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
+    return OB_INVALID_ARGUMENT;
+  }
+
   ObEvalCtx::TempAllocGuard tmp_alloc_g(ctx);
   common::ObArenaAllocator &temp_allocator = tmp_alloc_g.get_allocator();
 
-  ObIJsonBase *json_result = nullptr;
-  TokenizeParam param;
-  ObSQLSessionInfo *session = nullptr;
+  ObSQLSessionInfo *session = ctx.exec_ctx_.get_my_session();
   ObFTTokenizeCache *cache = nullptr;
   ObString cached_result;
+
+  if (expr.arg_cnt_ <= 2 && OB_NOT_NULL(session)) {
+    ObDatum *fulltext_datum = nullptr;
+    ObDatum *parser_datum = nullptr;
+    if (OB_FAIL(expr.args_[0]->eval(ctx, fulltext_datum))) {
+      return ret;
+    } else if (expr.arg_cnt_ == 2 && OB_FAIL(expr.args_[1]->eval(ctx, parser_datum))) {
+      return ret;
+    } else {
+      const ObString fulltext = fulltext_datum->is_null() ? ObString::make_empty_string() : fulltext_datum->get_string();
+      ObString raw_parser_name = (expr.arg_cnt_ < 2 || parser_datum->is_null())
+          ? ObString::make_string(OB_DEFAULT_FULLTEXT_PARSER_NAME)
+          : parser_datum->get_string().trim();
+      ObString canonical_parser_name;
+      if (0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_IK)) {
+        canonical_parser_name = ObString::make_string("ik.1");
+      } else if (0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_BENG)) {
+        canonical_parser_name = ObString::make_string("beng.1");
+      }
+      if (!canonical_parser_name.empty()
+          && OB_NOT_NULL(cache = session->get_fts_tokenize_cache(true))
+          && cache->get(fulltext,
+                               canonical_parser_name,
+                               ObString::make_empty_string(),
+                               expr.args_[0]->obj_meta_.get_collation_type(),
+                               TokenizeParam::OUTPUT_MODE::DEFAULT,
+                               temp_allocator,
+                               cached_result)) {
+        return ObJsonExprHelper::pack_json_str_res(expr, ctx, expr_datum, cached_result);
+      }
+    }
+  }
+
+  ObIJsonBase *json_result = nullptr;
+  TokenizeParam param;
   bool cache_hit = false;
 
   // check param num, which is checked in ObExprOperator::calc_result_typeN.
-  if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
-    ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(parse_fulltext(expr, ctx, param))) {
+  if (OB_FAIL(parse_fulltext(expr, ctx, param))) {
   } else if (OB_FAIL(parse_parser_name(expr, ctx, param))) {
   } else if (param.cacheable_
              && expr.arg_cnt_ < 3
              && OB_NOT_NULL(session = ctx.exec_ctx_.get_my_session())
              && OB_NOT_NULL(cache = session->get_fts_tokenize_cache(true))
              && cache->get(param.fulltext_,
-                           param.parser_name_,
-                           ObString::make_empty_string(),
-                           param.meta_.get_collation_type(),
-                           param.output_mode_,
-                           temp_allocator,
-                           cached_result)) {
+                                  param.parser_name_,
+                                  ObString::make_empty_string(),
+                                  param.meta_.get_collation_type(),
+                                  param.output_mode_,
+                                  temp_allocator,
+                                  cached_result)) {
     cache_hit = true;
   } else {
     MultimodeAlloctor mm_alloc(temp_allocator);
@@ -92,12 +127,12 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
                && OB_NOT_NULL(session = ctx.exec_ctx_.get_my_session())
                && OB_NOT_NULL(cache = session->get_fts_tokenize_cache(true))) {
       cache_hit = cache->get(param.fulltext_,
-                             param.parser_name_,
-                             param.properties_,
-                             param.meta_.get_collation_type(),
-                             param.output_mode_,
-                             temp_allocator,
-                             cached_result);
+                                    param.parser_name_,
+                                    param.properties_,
+                                    param.meta_.get_collation_type(),
+                                    param.output_mode_,
+                                    temp_allocator,
+                                    cached_result);
     }
   }
 
@@ -390,12 +425,18 @@ int ObExprTokenize::parse_parser_name(const ObExpr &expr, ObEvalCtx &ctx, Tokeni
     }
   }
 
-  param.cacheable_ = (0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_BENG))
-                  || (0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_IK));
-
-  if (OB_FAIL(ret)) {
-    // already logged
-  } else if (OB_FAIL(construct_ft_parser_inner_name(raw_parser_name, param))) {
+  if (0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_BENG)) {
+    param.cacheable_ = true;
+    param.parser_name_ = ObString::make_string("beng.1");
+  } else if (0 == raw_parser_name.case_compare(storage::ObFTSLiteral::PARSER_NAME_IK)) {
+    param.cacheable_ = true;
+    param.parser_name_ = ObString::make_string("ik.1");
+  } else {
+    param.cacheable_ = false;
+    if (OB_FAIL(ret)) {
+      // already logged
+    } else if (OB_FAIL(construct_ft_parser_inner_name(raw_parser_name, param))) {
+    }
   }
 
   return ret;

@@ -63,6 +63,8 @@ private:
   const ObFixedArray<const ObDatum *, ObIAllocator> *iter_ids_;
   bool is_inited_;
   bool is_binary_id_;
+  bool is_int_id_;
+  bool is_uint_id_;
 };
 
 typedef ObSimpleRowsMerger<ObSRMergeItem, ObSRMergeCmp> ObSRSimpleMerger;
