@@ -313,15 +313,10 @@ int ObTextRetrievalTokenIter::update_scan_param(const ObString &token, common::O
       ret = OB_ERR_UNEXPECTED;
     } else if (OB_FAIL(ob_write_obj(allocator, tmp_obj, *scan_range.start_key_.get_obj_ptr()))) {
     } else if (OB_FAIL(ob_write_obj(allocator, tmp_obj, *scan_range.end_key_.get_obj_ptr()))) {
-    } else if (!need_inv_idx_agg()) {
-      // skip inverted index aggregate iterator
     } else {
-      // inv_idx_agg_param_->key_ranges_ is used by estimate_token_doc_cnt via access_service.
-      // inv_idx_agg_iter_ itself is never read, so skip das_scan_reuse/rescan.
-      if (OB_UNLIKELY(!inv_idx_agg_param_->key_ranges_.empty())) {
-        ret = OB_ERR_UNEXPECTED;
-      } else if (OB_FAIL(inv_idx_agg_param_->key_ranges_.push_back(scan_range))) {
-      }
+      // The range objects are shared with key_ranges_[0], so changing their token
+      // updates the range used by estimate_token_doc_cnt without rescanning the
+      // unused aggregate iterator.
     }
 
     if (OB_FAIL(ret)) {
