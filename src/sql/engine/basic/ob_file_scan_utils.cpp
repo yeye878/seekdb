@@ -568,10 +568,12 @@ int ob_file_sql_resolve_paths(common::ObIAllocator &allocator,
         ret = OB_FILE_NOT_EXIST;
         LOG_WARN("failed to open directory", K(ret), K(resolved_dir), K(errno));
       } else {
+        const bool pattern_has_leading_dot = (base != nullptr && base[0] == '.');
         struct dirent *ent = nullptr;
         while (OB_SUCC(ret) && OB_NOT_NULL(ent = readdir(d))) {
           if (0 == strcmp(ent->d_name, ".") || 0 == strcmp(ent->d_name, "..") ||
-              0 != fnmatch(base, ent->d_name, 0)) {
+              (!pattern_has_leading_dot && ent->d_name[0] == '.') ||
+              0 != fnmatch(base, ent->d_name, FNM_PERIOD)) {
             continue;
           }
           const int64_t name_len = static_cast<int64_t>(strlen(ent->d_name));
