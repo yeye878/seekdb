@@ -92,6 +92,32 @@ select json_unquote(json_extract(tags, '$.input')) = 'Classify: dependency-updat
        as dependency_update_completed
 from ai_column_p0_t1.docs where id = 1;
 
+--exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py stop 19121
+prepare dependency_update_ps from 'update ai_column_p0_t1.docs set content = ? where id = 1';
+set @new_content = 'prepared-update';
+execute dependency_update_ps using @new_content;
+deallocate prepare dependency_update_ps;
+select tags is null as prepared_update_invalidates
+from ai_column_p0_t1.docs where id = 1;
+select count(*) = 1 as prepared_update_creates_task
+from oceanbase.__all_ai_column_task task
+join oceanbase.__all_table t on t.table_id = task.table_id
+join oceanbase.__all_database d on d.database_id = t.database_id
+where d.database_name = 'ai_column_p0_t1' and t.table_name = 'docs';
+--exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py start 19121
+let $retry = 15;
+let $done = 0;
+while ($retry)
+{
+  let $done = `select tags is not null from ai_column_p0_t1.docs where id = 1`;
+  if ($done == 1) { let $retry = 0; }
+  if ($done == 0) { --real_sleep 1
+    dec $retry; }
+}
+select json_unquote(json_extract(tags, '$.input')) = 'Classify: prepared-update'
+       as prepared_update_completed
+from ai_column_p0_t1.docs where id = 1;
+
 start transaction;
 update ai_column_p0_t1.docs set id = 2 where id = 1;
 select count(*) = 0 as old_primary_key_removed
@@ -133,7 +159,7 @@ join oceanbase.__all_table t on t.table_id = task.table_id
 join oceanbase.__all_database d on d.database_id = t.database_id
 where d.database_name = 'ai_column_p0_t1' and t.table_name = 'docs';
 rollback;
-select content = 'dependency-update' and tags is not null as rollback_restores_row
+select content = 'prepared-update' and tags is not null as rollback_restores_row
 from ai_column_p0_t1.docs where id = 2;
 select count(*) = 0 as rollback_removes_task
 from oceanbase.__all_ai_column_task task

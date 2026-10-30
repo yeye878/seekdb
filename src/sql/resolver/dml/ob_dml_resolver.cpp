@@ -31,6 +31,8 @@
 #include "sql/engine/expr/ob_expr_version.h"
 #include "sql/resolver/dml/ob_insert_resolver.h"
 #include "sql/resolver/dml/ob_inlist_resolver.h"
+#include "sql/resolver/ddl/ob_ai_column_meta.h"
+#include "share/system_variable/ob_sys_var_class_type.h"
 #include "sql/session/ob_local_session_var.h"
 #include "sql/session/ob_basic_session_info.h"
 #include "sql/engine/aggregate/ob_aggregate_processor.h"
@@ -1829,6 +1831,19 @@ int ObDMLResolver::resolve_basic_column_ref(const ObQualifiedName &q_name, ObRaw
   return ret;
 }
 
+namespace {
+
+// whether the column name is the name of an internal column of an AI column
+bool is_ai_column_internal_name(const ObString &column_name)
+{
+  const char *prefix = "__ai_";
+  const int64_t prefix_len = 5;
+  return column_name.length() >= prefix_len
+      && 0 == strncasecmp(column_name.ptr(), prefix, static_cast<size_t>(prefix_len));
+}
+
+}  // namespace
+
 int ObDMLResolver::resolve_basic_column_item(const TableItem &table_item,
                                              const ObString &column_name,
                                              bool include_hidden,
@@ -1852,6 +1867,11 @@ int ObDMLResolver::resolve_basic_column_item(const TableItem &table_item,
                          && !table_item.is_fake_cte_table())) {
     ret = OB_ERR_UNEXPECTED;
   } else if (NULL != (col_item = stmt->get_column_item(table_item.table_id_, column_name))) {
+    if (!include_hidden && is_ai_column_internal_name(column_name)) {
+      // the internal columns of the AI columns are hidden columns, they can be
+      // referenced by the internal SQL of the AI column worker
+      include_hidden = true;
+    }
     if (!include_hidden) {
       if (!ObCharset::case_insensitive_equal(column_name, OB_HIDDEN_PK_INCREMENT_COLUMN_NAME)) {
         //do nothing
@@ -1866,6 +1886,11 @@ int ObDMLResolver::resolve_basic_column_item(const TableItem &table_item,
     const ObColumnSchemaV2 *col_schema = NULL;
     const ObTableSchema *table_schema = NULL;
     uint64_t tid = table_item.ref_id_;
+    if (!include_hidden && is_ai_column_internal_name(column_name)) {
+      // the internal columns of the AI columns are hidden columns, they can be
+      // referenced by the internal SQL of the AI column worker
+      include_hidden = true;
+    }
     if (!include_hidden) {
       if (!ObCharset::case_insensitive_equal(column_name, OB_HIDDEN_PK_INCREMENT_COLUMN_NAME)) {
         //do nothing
@@ -2650,7 +2675,11 @@ int ObDMLResolver::resolve_table(const ParseNode &parse_tree,
     } else {
       switch (table_node->type_) {
       case T_RELATION_FACTOR: {
-        if (OB_FAIL(resolve_basic_table(parse_tree, table_item))) {
+        if (ai_column_is_meta_table(*table_node)) {
+          if (OB_FAIL(resolve_ai_column_meta_table_item(*table_node, alias_node, table_item))) {
+            LOG_WARN("failed to resolve the ai column metadata table", K(ret));
+          }
+        } else if (OB_FAIL(resolve_basic_table(parse_tree, table_item))) {
         }
         break;
       }
@@ -12139,10 +12168,17 @@ int ObDMLResolver::gen_values_table_column_items(const int64_t column_cnt,
         column_expr->set_result_type(res_types.at(i));
         column_expr->set_result_flag(table_def->access_exprs_.at(i)->get_result_flag());
         column_expr->set_ref_id(table_item.table_id_, i + OB_APP_MIN_COLUMN_ID);
-        // compatible Mysql8.0, column name is column_0, column_1, ...
+        // Optional values-backed virtual-table names; otherwise use the
+        // MySQL-compatible column_0, column_1, ... naming.
         ObSqlString tmp_col_name;
         char *buf = NULL;
-        if (OB_FAIL(tmp_col_name.append_fmt("column_%ld", i))) {
+        if (table_def->column_names_.count() == column_cnt) {
+          ret = tmp_col_name.assign(table_def->column_names_.at(i).ptr(),
+                                    table_def->column_names_.at(i).length());
+        } else {
+          ret = tmp_col_name.append_fmt("column_%ld", i);
+        }
+        if (OB_FAIL(ret)) {
         } else if (OB_ISNULL(buf = static_cast<char*>(allocator_->alloc(tmp_col_name.length())))) {
           ret = common::OB_ALLOCATE_MEMORY_FAILED;
         } else {
@@ -13488,6 +13524,247 @@ int ObDMLResolver::check_need_fill_embedded_vec_expr_param(const ObDMLStmt &stmt
         ret = OB_ERR_UNEXPECTED;
       } else if (session_info_->get_ddl_info().is_ddl()) {
         need_fill = false;
+      }
+    }
+  }
+  return ret;
+}
+
+/**
+ * An empty values table cannot carry access exprs: the values table access op
+ * derives the row count from them. Generate the column items directly instead,
+ * so that the op keeps a row count of zero.
+ */
+int gen_empty_values_table_column_items(ObRawExprFactory &expr_factory,
+                                      ObIAllocator &allocator,
+                                      ObDMLStmt &stmt,
+                                      const int64_t column_cnt,
+                                      const ObIArray<ObRawExprResType> &res_types,
+                                      const ObIArray<ObString> &column_names,
+                                      const uint64_t table_id,
+                                      const ObString &table_name)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(column_cnt <= 0) || OB_UNLIKELY(res_types.count() != column_cnt)
+      || OB_UNLIKELY(column_names.count() != column_cnt)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("invalid empty values table", K(column_cnt), K(res_types.count()),
+             K(column_names.count()), K(ret));
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < column_cnt; ++i) {
+      ObColumnRefRawExpr *column_expr = NULL;
+      char *buf = NULL;
+      const ObString &name = column_names.at(i);
+      if (OB_FAIL(expr_factory.create_raw_expr(T_REF_COLUMN, column_expr))) {
+        LOG_WARN("failed to create column expr", K(ret));
+      } else if (OB_ISNULL(column_expr)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_ISNULL(buf = static_cast<char *>(allocator.alloc(name.length())))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        MEMCPY(buf, name.ptr(), name.length());
+        ObString column_name(name.length(), buf);
+        column_expr->set_result_type(res_types.at(i));
+        column_expr->set_ref_id(table_id, i + OB_APP_MIN_COLUMN_ID);
+        column_expr->set_column_attr(table_name, column_name);
+        if (OB_FAIL(column_expr->add_flag(IS_COLUMN))) {
+        } else {
+          ColumnItem column_item;
+          column_item.expr_ = column_expr;
+          column_item.table_id_ = column_expr->get_table_id();
+          column_item.column_id_ = column_expr->get_column_id();
+          column_item.column_name_ = column_expr->get_column_name();
+          if (OB_FAIL(stmt.add_column_item(column_item))) {
+            LOG_WARN("failed to add column item", K(ret));
+          }
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+int ObDMLResolver::resolve_ai_column_meta_table_item(const ParseNode &table_node,
+                                                     const ParseNode *alias_node,
+                                                     TableItem *&table_item)
+{
+  int ret = OB_SUCCESS;
+  ObDMLStmt *dml_stmt = get_stmt();
+  const int64_t column_cnt = 8;
+  static const char *const COLUMN_NAMES[8] = {"table_id", "column_id", "column_name",
+                                              "max_retries", "state_column_id",
+                                              "request_column_id", "result_spec_column_id",
+                                              "normalized_expr"};
+  const bool is_varchar_column[8] = {false, false, true, false, false, false, false, true};
+  ObSEArray<ObAiColumnMeta, 16> metas;
+  ObSEArray<ObObj, 64> cells;
+  ObValuesTableDef *table_def = NULL;
+  TableItem *new_table_item = NULL;
+  void *buf = NULL;
+  int64_t row_cnt = 0;
+  if (OB_ISNULL(dml_stmt)) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("the dml statement is null", K(ret));
+  } else if (OB_FAIL(ObAiColumnRegistry::get_instance().get_metas(metas))) {
+    LOG_WARN("failed to get the ai column metadata", K(ret));
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < metas.count(); ++i) {
+    const ObAiColumnMeta &meta = metas.at(i);
+    uint64_t table_id = OB_INVALID_ID;
+    const ObTableSchema *table_schema = NULL;
+    const ObColumnSchemaV2 *ref_column = NULL;
+    const ObColumnSchemaV2 *state_column = NULL;
+    const ObColumnSchemaV2 *request_column = NULL;
+    const ObColumnSchemaV2 *spec_column = NULL;
+    if (OB_SUCCESS != (ret = schema_checker_->get_table_schema(meta.db_name_,
+                                                              meta.table_name_,
+                                                              false,
+                                                              table_schema))) {
+      // the table has been dropped, its metadata is invisible
+      ret = OB_SUCCESS;
+    } else if (OB_ISNULL(table_schema) ||
+               OB_ISNULL(ref_column = table_schema->get_column_schema(meta.column_name_))) {
+      // the AI column has been dropped
+    } else {
+      table_id = table_schema->get_table_id();
+      state_column = table_schema->get_column_schema(meta.state_column_name_);
+      request_column = table_schema->get_column_schema(meta.request_column_name_);
+      spec_column = table_schema->get_column_schema(meta.result_spec_column_name_);
+      ObObj obj;
+      obj.set_int(static_cast<int64_t>(table_id));
+      if (OB_FAIL(cells.push_back(obj))) {
+      } else {
+        obj.set_int(static_cast<int64_t>(ref_column->get_column_id()));
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(cells.push_back(obj))) {
+      } else {
+        obj.set_varchar(meta.column_name_);
+        obj.set_collation_type(CS_TYPE_UTF8MB4_GENERAL_CI);
+        obj.set_collation_level(CS_LEVEL_IMPLICIT);
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(cells.push_back(obj))) {
+      } else {
+        obj.set_int(meta.max_retries_);
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(cells.push_back(obj))) {
+      } else {
+        obj.set_int(NULL == state_column ? 0 : static_cast<int64_t>(state_column->get_column_id()));
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(cells.push_back(obj))) {
+      } else {
+        obj.set_int(NULL == request_column ? 0
+                                           : static_cast<int64_t>(request_column->get_column_id()));
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(cells.push_back(obj))) {
+      } else {
+        obj.set_int(NULL == spec_column ? 0 : static_cast<int64_t>(spec_column->get_column_id()));
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(cells.push_back(obj))) {
+      } else {
+        obj.set_varchar(meta.normalized_expr_);
+        obj.set_collation_type(CS_TYPE_UTF8MB4_GENERAL_CI);
+        obj.set_collation_level(CS_LEVEL_IMPLICIT);
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(cells.push_back(obj))) {
+      } else {
+        ++row_cnt;
+      }
+    }
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_ISNULL(buf = allocator_->alloc(sizeof(ObValuesTableDef)))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else if (OB_ISNULL(table_def = new (buf) ObValuesTableDef())) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else if (OB_ISNULL(new_table_item = ObDMLStmt::create_table_item(*allocator_))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
+    table_def->column_cnt_ = column_cnt;
+    table_def->row_cnt_ = row_cnt;
+    table_def->is_const_ = true;
+    for (int64_t j = 0; OB_SUCC(ret) && j < column_cnt; ++j) {
+      ObRawExprResType res_type;
+      res_type.set_type(is_varchar_column[j] ? ObVarcharType : ObIntType);
+      if (is_varchar_column[j]) {
+        int64_t max_len = 0;
+        res_type.set_collation_type(CS_TYPE_UTF8MB4_GENERAL_CI);
+        res_type.set_collation_level(CS_LEVEL_IMPLICIT);
+        for (int64_t r = 0; OB_SUCC(ret) && r < row_cnt; ++r) {
+          const ObObj &cell = cells.at(r * column_cnt + j);
+          if (cell.is_varchar_or_char() && cell.get_string_len() > max_len) {
+            max_len = cell.get_string_len();
+          }
+        }
+        ObAccuracy accuracy;
+        accuracy.set_length(static_cast<ObLength>(max_len > 0 ? max_len : 1));
+        res_type.set_accuracy(accuracy);
+      }
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(table_def->column_types_.push_back(res_type))) {
+      } else if (OB_FAIL(table_def->column_names_.push_back(
+                   ObString::make_string(COLUMN_NAMES[j])))) {
+      }
+    }
+    for (int64_t k = 0; OB_SUCC(ret) && k < cells.count(); ++k) {
+      ObConstRawExpr *const_expr = NULL;
+      if (OB_FAIL(ObRawExprUtils::build_const_obj_expr(*params_.expr_factory_,
+                                                       cells.at(k),
+                                                       const_expr))) {
+      } else if (OB_ISNULL(const_expr)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(const_expr->formalize(session_info_))) {
+      } else if (OB_FAIL(table_def->access_exprs_.push_back(const_expr))) {
+      }
+    }
+    if (OB_SUCC(ret) && row_cnt > 0) {
+      if (OB_FAIL(compute_values_table_row_count(*table_def))) {
+        LOG_WARN("failed to compute the row count of the values table", K(ret));
+      }
+    }
+    if (OB_SUCC(ret) && OB_FAIL(estimate_values_table_stats(*table_def))) {
+      LOG_WARN("failed to estimate the statistics of the values table", K(ret));
+    }
+    if (OB_SUCC(ret)) {
+      ObString table_name;
+      if (NULL != alias_node && NULL != alias_node->str_value_) {
+        table_name.assign_ptr(alias_node->str_value_, static_cast<int32_t>(alias_node->str_len_));
+      } else if (OB_FAIL(dml_stmt->generate_values_table_name(*allocator_, table_name))) {
+        LOG_WARN("failed to generate the table name", K(ret));
+      }
+      if (OB_SUCC(ret)) {
+        new_table_item->values_table_def_ = table_def;
+        new_table_item->table_id_ = generate_table_id();
+        new_table_item->table_name_ = table_name;
+        new_table_item->alias_name_ = table_name;
+        new_table_item->type_ = TableItem::VALUES_TABLE;
+        new_table_item->is_view_table_ = false;
+        if (OB_FAIL(dml_stmt->add_table_item(session_info_, new_table_item))) {
+          LOG_WARN("failed to add the table item", K(ret));
+        } else if (0 == row_cnt &&
+                   OB_FAIL(gen_empty_values_table_column_items(*params_.expr_factory_,
+                                                             *allocator_,
+                                                             *dml_stmt,
+                                                             table_def->column_cnt_,
+                                                             table_def->column_types_,
+                                                             table_def->column_names_,
+                                                             new_table_item->table_id_,
+                                                             new_table_item->table_name_))) {
+          LOG_WARN("failed to generate the column items of the empty table", K(ret));
+        } else if (row_cnt > 0 &&
+                   OB_FAIL(gen_values_table_column_items(table_def->column_cnt_,
+                                                         table_def->column_types_,
+                                                         *new_table_item))) {
+          LOG_WARN("failed to generate the column items", K(ret));
+        } else {
+          table_item = new_table_item;
+        }
       }
     }
   }

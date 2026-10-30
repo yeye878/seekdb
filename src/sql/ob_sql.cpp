@@ -25,6 +25,9 @@
 #include "sql/plan_cache/ob_pcv_set.h"
 #include "sql/ob_sql_init.h"
 #include "sql/resolver/ob_resolver.h"
+#include "sql/resolver/dml/ob_select_stmt.h"
+#include "sql/resolver/ddl/ob_ai_column_meta.h"
+#include "share/system_variable/ob_sys_var_class_type.h"
 #include "sql/resolver/cmd/ob_variable_set_stmt.h"
 #include "sql/resolver/cmd/ob_call_procedure_stmt.h"
 #include "sql/resolver/cmd/ob_anonymous_block_stmt.h"
@@ -1831,7 +1834,50 @@ int ObSql::handle_ps_execute(const ObPsStmtId client_stmt_id,
       ret = OB_ERR_UNEXPECTED;
     } else if (OB_FAIL(construct_param_store(ps_params, pctx->get_param_store_for_update()))) {
     } else {
-      const ObString &sql = !ps_info->get_no_param_sql().empty() ? ps_info->get_no_param_sql() : ps_info->get_ps_sql();
+      ObString sql = !ps_info->get_no_param_sql().empty() ? ps_info->get_no_param_sql() : ps_info->get_ps_sql();
+      // Prepared and dynamic execution must observe the same AI-column
+      // semantics as text SQL before a plan is generated or reused.
+      bool strict_read = false;
+      if (OB_FAIL(session.get_sys_variable(share::SYS_VAR_AI_COLUMN_STRICT_READ, strict_read))) {
+        LOG_WARN("failed to get the ai column strict read mode", K(ret));
+      } else if (OB_FAIL(ai_column_check_strict_read(sql, session.get_database_name(), strict_read))) {
+        LOG_WARN("the ai column is not ready", K(ret));
+        ectx.set_need_disconnect(false);
+      }
+      if (OB_SUCC(ret)) {
+        ObString retry_sql;
+        bool retried = false;
+        if (OB_FAIL(ai_column_rewrite_retry_stmt(sql, allocator, retry_sql, retried))) {
+          LOG_WARN("failed to rewrite the prepared ai column retry statement", K(ret));
+          ectx.set_need_disconnect(false);
+        } else if (retried) {
+          sql = retry_sql;
+        }
+      }
+      if (OB_SUCC(ret)) {
+        ObString update_sql;
+        bool updated = false;
+        if (OB_FAIL(ai_column_rewrite_update_stmt(sql, allocator, update_sql, updated))) {
+          LOG_WARN("failed to rewrite the prepared ai column update statement", K(ret));
+          ectx.set_need_disconnect(false);
+        } else if (updated) {
+          sql = update_sql;
+        }
+      }
+      if (OB_SUCC(ret)) {
+        ObString rewritten_sql;
+        bool rewritten = false;
+        if (OB_FAIL(ai_column_rewrite_task_table(sql, allocator, rewritten_sql, rewritten))) {
+          LOG_WARN("failed to rewrite the prepared ai column task table", K(ret));
+          ectx.set_need_disconnect(false);
+        } else if (rewritten) {
+          sql = rewritten_sql;
+        }
+      }
+      if (OB_FAIL(ret)) {
+        // Do not let generate_ps_sql_id() overwrite an AI-column rejection.
+        return ret;
+      }
       context.cur_sql_ = sql;
       context.raw_sql_ = ps_info->get_ps_sql();
 #ifndef NDEBUG
@@ -1948,6 +1994,49 @@ OB_INLINE int ObSql::handle_text_query(const ObString &stmt, ObSqlCtx &context, 
   ObExecContext& ectx = result.get_exec_context();
   int get_plan_err = OB_SUCCESS; //used for judge whether add plan to plan cache
   bool use_plan_cache = session.get_local_ob_enable_plan_cache();
+  if (OB_SUCC(ret)) {
+    bool strict_read = false;
+    if (OB_FAIL(session.get_sys_variable(share::SYS_VAR_AI_COLUMN_STRICT_READ, strict_read))) {
+      LOG_WARN("failed to get the ai column strict read mode", K(ret));
+    } else if (OB_FAIL(ai_column_check_strict_read(trimed_stmt, session.get_database_name(), strict_read))) {
+      LOG_WARN("the ai column is not ready", K(ret));
+      // the statement is rejected with a user error, the client must not lose
+      // the connection
+      ectx.set_need_disconnect(false);
+    }
+  }
+  if (OB_SUCC(ret)) {
+    ObString retry_sql;
+    bool retried = false;
+    if (OB_FAIL(ai_column_rewrite_retry_stmt(trimed_stmt, allocator, retry_sql, retried))) {
+      LOG_WARN("failed to rewrite the ai column retry statement", K(ret));
+      // the statement is rejected with a user error, the client must not lose
+      // the connection
+      ectx.set_need_disconnect(false);
+    } else if (retried) {
+      trimed_stmt = retry_sql;
+    }
+  }
+  if (OB_SUCC(ret)) {
+    ObString update_sql;
+    bool updated = false;
+    if (OB_FAIL(ai_column_rewrite_update_stmt(trimed_stmt, allocator, update_sql, updated))) {
+      LOG_WARN("failed to rewrite the ai column update statement", K(ret));
+      ectx.set_need_disconnect(false);
+    } else if (updated) {
+      trimed_stmt = update_sql;
+    }
+  }
+  if (OB_SUCC(ret)) {
+    ObString rewritten_sql;
+    bool rewritten = false;
+    if (OB_FAIL(ai_column_rewrite_task_table(trimed_stmt, allocator, rewritten_sql, rewritten))) {
+      LOG_WARN("failed to rewrite the ai column task table", K(ret));
+      ectx.set_need_disconnect(false);
+    } else if (rewritten) {
+      trimed_stmt = rewritten_sql;
+    }
+  }
   ObPlanCacheCtx *pc_ctx = NULL;
   bool is_begin_commit_stmt = false;
 

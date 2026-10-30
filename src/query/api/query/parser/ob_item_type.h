@@ -2280,6 +2280,9 @@ typedef enum ObItemType
   T_DIFF_TABLE = 4918,
   T_MERGE_TABLE = 4919,
   T_FLUSH_PRIVILEGES = 4920,
+  T_CONSTR_AI_COLUMN = 4926,
+  T_AI_COLUMN_OPTION = 4927,
+  T_AI_COLUMN_OPTIONS = 4928,
   T_MAX //Attention: add a new type before T_MAX
 } ObItemType;
 

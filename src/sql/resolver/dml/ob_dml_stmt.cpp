@@ -4508,6 +4508,12 @@ int ObValuesTableDef::deep_copy(const ObValuesTableDef &other,
         }
       }
     }
+    for (int64_t i = 0; OB_SUCC(ret) && i < other.column_names_.count(); ++i) {
+      ObString tmp_name;
+      if (OB_FAIL(ob_write_string(*allocator, other.column_names_.at(i), tmp_name))) {
+      } else if (OB_FAIL(column_names_.push_back(tmp_name))) {
+      }
+    }
   }
   return ret;
 }

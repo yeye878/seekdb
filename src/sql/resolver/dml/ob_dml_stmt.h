@@ -128,9 +128,12 @@ struct ObValuesTableDef {
   common::ObArray<ObRawExprResType, common::ModulePageAllocator, true> column_types_;
   // Non-null only for a streaming file source; access_objs_ stays empty in that case.
   ObFileTableDef *file_table_def_;
+  // Optional output names for values-backed virtual tables. An empty array
+  // preserves the compatible column_0, column_1, ... naming.
+  common::ObArray<common::ObString, common::ModulePageAllocator, true> column_names_;
   virtual TO_STRING_KV(K(column_cnt_), K(row_cnt_), K(access_exprs_), K(start_param_idx_),
                        K(end_param_idx_), K(access_objs_), K(column_ndvs_), K(column_nnvs_),
-                       K(access_type_), K(is_const_), K(column_types_));
+                       K(access_type_), K(is_const_), K(column_types_), K(column_names_));
 };
 
 struct TableItem

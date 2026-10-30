@@ -194,6 +194,137 @@ select json_unquote(json_extract(tags, '$.input')) = 'Classify: fast-new'
 from ai_column_p0_worker.docs where id = 4;
 --exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py assert 19122 stale-guard
 
+--exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py reset 19122
+set session timestamp = 1700000000;
+insert into ai_column_p0_worker.retry_docs(id, content) values(6, 'slow-old');
+--real_sleep 0.3
+alter table ai_column_p0_worker.retry_docs retry ai column result where id = 6;
+--real_sleep 1.5
+alter table ai_column_p0_worker.retry_docs retry ai column result where id = 6;
+let $retry = 150;
+let $done = 0;
+while ($retry)
+{
+  let $done = `select ifnull(result = 'mock:slow-old', 0)
+               from ai_column_p0_worker.retry_docs where id = 6`;
+  if ($done == 1)
+  {
+    let $retry = 0;
+  }
+  if ($done == 0)
+  {
+    --real_sleep 0.1
+    dec $retry;
+  }
+}
+eval select $done = 1 as same_input_retry_completes;
+set session timestamp = 0;
+--real_sleep 2
+--exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py assert 19122 same-input-retry
+
+drop table if exists ai_column_p0_worker.mixed_docs;
+create table ai_column_p0_worker.mixed_docs(
+  id bigint primary key,
+  content varchar(200),
+  good_result varchar(400) AI COLUMN (
+    AI_COMPLETE('p0_worker_complete', content)
+  ) WITH (sync_mode='async', max_retries=1),
+  failed_result varchar(400) AI COLUMN (
+    AI_COMPLETE('p0_worker_fail', content)
+  ) WITH (sync_mode='async', max_retries=1)
+);
+insert into ai_column_p0_worker.mixed_docs(id, content) values(7, 'group-terminal');
+let $retry = 150;
+let $partial = 0;
+let $terminal = 0;
+while ($retry)
+{
+  let $visible = `select ifnull((good_result is not null) + (failed_result is not null), 0)
+                  from ai_column_p0_worker.mixed_docs where id = 7`;
+  let $tasks = `select count(*)
+      from oceanbase.__all_ai_column_task task
+      join oceanbase.__all_table t on t.table_id = task.table_id
+      join oceanbase.__all_database d on d.database_id = t.database_id
+      where d.database_name = 'ai_column_p0_worker'
+        and t.table_name = 'mixed_docs'`;
+  if ($tasks > 0)
+  {
+    if ($visible > 0)
+    {
+      let $partial = 1;
+    }
+  }
+  if ($tasks == 0)
+  {
+    let $terminal = 1;
+    let $retry = 0;
+  }
+  if ($terminal == 0)
+  {
+    --real_sleep 0.1
+    dec $retry;
+  }
+}
+eval select $partial = 0 as no_result_before_group_terminal;
+eval select $terminal = 1 as mixed_group_reaches_terminal;
+select good_result = 'mock:group-terminal' and failed_result is null
+       as terminal_group_published_together
+from ai_column_p0_worker.mixed_docs where id = 7;
+
+drop table ai_column_p0_worker.mixed_docs;
+
+--exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py reset 19122
+drop table if exists ai_column_p0_worker.alternating_docs;
+create table ai_column_p0_worker.alternating_docs(
+  id bigint primary key,
+  content varchar(200),
+  flip_result varchar(400) AI COLUMN (
+    AI_COMPLETE('p0_worker_complete', 'flip-flop')
+  ) WITH (sync_mode='async', max_retries=1),
+  retry_result varchar(400) AI COLUMN (
+    AI_COMPLETE('p0_worker_complete', content)
+  ) WITH (sync_mode='async', max_retries=1)
+);
+insert into ai_column_p0_worker.alternating_docs(id, content) values(8, 'alternate-retry-once');
+let $retry = 150;
+let $partial = 0;
+let $terminal = 0;
+while ($retry)
+{
+  let $visible = `select ifnull((flip_result is not null) + (retry_result is not null), 0)
+                  from ai_column_p0_worker.alternating_docs where id = 8`;
+  let $tasks = `select count(*)
+      from oceanbase.__all_ai_column_task task
+      join oceanbase.__all_table t on t.table_id = task.table_id
+      join oceanbase.__all_database d on d.database_id = t.database_id
+      where d.database_name = 'ai_column_p0_worker'
+        and t.table_name = 'alternating_docs'`;
+  if ($tasks > 0)
+  {
+    if ($visible > 0)
+    {
+      let $partial = 1;
+    }
+  }
+  if ($tasks == 0)
+  {
+    let $terminal = 1;
+    let $retry = 0;
+  }
+  if ($terminal == 0)
+  {
+    --real_sleep 0.1
+    dec $retry;
+  }
+}
+eval select $partial = 0 as alternating_no_partial_visibility;
+eval select $terminal = 1 as alternating_group_terminal;
+select flip_result = 'mock:flip-flop' and retry_result = 'mock:alternate-retry-once'
+       as cached_success_not_recomputed
+from ai_column_p0_worker.alternating_docs where id = 8;
+--exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py assert 19122 alternating-cache
+drop table ai_column_p0_worker.alternating_docs;
+
 drop table ai_column_p0_worker.fail_docs;
 drop table ai_column_p0_worker.retry_docs;
 drop table ai_column_p0_worker.docs;

@@ -127,6 +127,8 @@ def serve(port):
 
             fail = "always-fail" in parsed.path or (
                 "retry-once" in user_text and attempt == 1
+            ) or (
+                "flip-flop" in user_text and attempt >= 2
             )
             if fail:
                 status = 400
@@ -218,6 +220,20 @@ def assert_events(port, assertion):
         ok = (
             any("slow-old" in event["user"] for event in events)
             and any("fast-new" in event["user"] for event in events)
+        )
+    elif assertion == "same-input-retry":
+        retry_events = [event for event in events if "slow-old" in event["user"]]
+        ok = len(retry_events) == 3 and all(
+            event["status"] == 200 for event in retry_events
+        )
+    elif assertion == "alternating-cache":
+        flip_events = [event for event in events if "flip-flop" in event["user"]]
+        retry_events = [event for event in events if "retry-once" in event["user"]]
+        ok = (
+            len(flip_events) == 1
+            and len(retry_events) == 2
+            and flip_events[0]["status"] == 200
+            and [event["status"] for event in retry_events] == [400, 200]
         )
     elif assertion == "embedding":
         ok = any(event["path"].endswith("/embeddings") for event in events)
