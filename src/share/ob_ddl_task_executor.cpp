@@ -242,7 +242,8 @@ void ObDDLTaskExecutor::run1()
 ObDDLLocalBuilder::ObDDLLocalBuilder()
   : is_thread_started_(false),
     is_stopped_(true),
-    task_queue_()
+    task_queue_(),
+    fts_aux_queue_()
 {
 
 }
@@ -259,14 +260,19 @@ int ObDDLLocalBuilder::init()
             K(is_thread_started_), K(is_stopped_));
   if (OB_UNLIKELY(is_thread_started_)) {
     ret = OB_STATE_NOT_MATCH;
-  } else if (OB_FAIL(task_queue_.init(get_thread_cnt_(), 4 << 10, "DdlBuild"))) {
-  } else if (OB_FAIL(task_queue_.start())) {
   } else {
-    is_thread_started_ = true;
-    is_stopped_ = true;
-  }
-  if (OB_FAIL(ret)) {
-    task_queue_.destroy();
+    if (OB_FAIL(task_queue_.init(get_thread_cnt_(), 4 << 10, "DdlBuild"))) {
+    } else if (OB_FAIL(task_queue_.start())) {
+    } else if (lib::is_mini_mode() && OB_FAIL(fts_aux_queue_.init(2, 4 << 10, "DdlFTSBuild"))) {
+    } else if (lib::is_mini_mode() && OB_FAIL(fts_aux_queue_.start())) {
+    } else {
+      is_thread_started_ = true;
+      is_stopped_ = true;
+    }
+    if (OB_FAIL(ret)) {
+      fts_aux_queue_.destroy();
+      task_queue_.destroy();
+    }
   }
   FLOG_INFO("[DDL_LOCAL_BUILDER] finish init ddl local builder",
             KR(ret), K(is_thread_started_), K(is_stopped_));
@@ -305,6 +311,7 @@ void ObDDLLocalBuilder::server_module_thread_stop()
             K(is_thread_started_), K(is_stopped_));
   if (is_thread_started_) {
     task_queue_.stop();
+    if (lib::is_mini_mode()) { fts_aux_queue_.stop(); }
   }
   FLOG_INFO("[DDL_LOCAL_BUILDER] finish server_module_thread_stop ddl local builder",
             K(is_thread_started_), K(is_stopped_));
@@ -316,6 +323,7 @@ void ObDDLLocalBuilder::server_module_thread_wait()
             K(is_thread_started_), K(is_stopped_));
   if (is_thread_started_) {
     task_queue_.wait();
+    if (lib::is_mini_mode()) { fts_aux_queue_.wait(); }
   }
   FLOG_INFO("[DDL_LOCAL_BUILDER] finish server_module_thread_wait ddl local builder",
             K(is_thread_started_), K(is_stopped_));
@@ -328,6 +336,7 @@ void ObDDLLocalBuilder::destroy()
   {
     if (is_thread_started_) {
       is_stopped_ = true;
+      if (lib::is_mini_mode()) { fts_aux_queue_.destroy(); }
       task_queue_.destroy();
       is_thread_started_ = false;
     }
@@ -336,13 +345,15 @@ void ObDDLLocalBuilder::destroy()
             K(is_thread_started_), K(is_stopped_));
 }
 
-int ObDDLLocalBuilder::push_task(ObAsyncTask &task)
+int ObDDLLocalBuilder::push_task(ObAsyncTask &task, bool fts_aux)
 {
   int ret = OB_SUCCESS;
   if (OB_UNLIKELY(!is_thread_started_)) {
     ret = OB_ERR_SYS;
   } else if (is_stopped_) {
     ret = OB_STATE_NOT_MATCH;
+  } else if (lib::is_mini_mode() && fts_aux) {
+    ret = fts_aux_queue_.push(task);
   } else if (OB_FAIL(task_queue_.push(task))) {
   }
   return ret;

@@ -190,13 +190,14 @@ public:
   void server_module_thread_stop();
   void server_module_thread_wait();
   void destroy();
-  int push_task(ObAsyncTask &task);
+  int push_task(ObAsyncTask &task, bool fts_aux = false);
 
 private:
   int64_t get_thread_cnt_() const;
   bool is_thread_started_;
   bool is_stopped_;
   ObAsyncTaskQueue task_queue_;
+  ObAsyncTaskQueue fts_aux_queue_;
 };
 
 }  // end namespace share

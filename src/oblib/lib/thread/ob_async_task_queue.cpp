@@ -47,7 +47,12 @@ int ObAsyncTaskQueue::init(const int64_t thread_cnt, const int64_t queue_size, c
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(allocator_.init(TOTAL_LIMIT, HOLD_LIMIT, page_size))) {
   } else if (OB_FAIL(queue_.init(queue_size))) {
+    allocator_.destroy();
   } else if (OB_FAIL(create(thread_cnt, thread_name))) {
+    // create() may have initialized the reentrant thread before failing.
+    ObReentrantThread::destroy();
+    queue_.destroy();
+    allocator_.destroy();
   } else {
     allocator_.set_attr(ObMemAttr("AsyncTaskQueue"));
     is_inited_ = true;

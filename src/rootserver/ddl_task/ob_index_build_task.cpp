@@ -755,7 +755,9 @@ int ObIndexBuildTask::send_local_build_request(
           is_partitioned_local_index_task,
           is_retryable_ddl_);
       if (OB_FAIL(task.set_addition_info(index_partition_ids))) {
-      } else if (OB_FAIL(local_management_service_->submit_ddl_local_build_task(task))) {
+      } else if (OB_FAIL(local_management_service_->submit_ddl_local_build_task(
+          task, share::schema::is_fts_index_aux(create_index_arg_.index_type_)
+              || share::schema::is_fts_doc_word_aux(create_index_arg_.index_type_)))) {
       } else {
         is_sstable_complete_task_submitted_ = true;
         sstable_complete_request_time_ = ObTimeUtility::current_time();
